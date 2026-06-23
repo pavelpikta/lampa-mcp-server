@@ -1,0 +1,942 @@
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import path from "node:path";
+import fs from "node:fs";
+import type { Config } from "../config.js";
+import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
+import { searchCode } from "../utils/search.js";
+
+export function registerAdvancedTools(server: McpServer, config: Config): void {
+  // ── read_file ──────────────────────────────────────────────────────────────
+  // The existing read_file_segment requires knowing line numbers upfront.
+  // This tool reads an entire file, which is the most common need.
+  server.tool(
+    "read_file",
+    "Read the complete contents of any file in the Lampa repo. Files larger than max_lines are truncated — use read_file_segment to read specific sections of large files.",
+    {
+      file: z
+        .string()
+        .describe(
+          "Repo-relative path, e.g. 'plugins/iptv/iptv.js', 'src/core/lang.js', 'gulpfile.js'."
+        ),
+      max_lines: z.number().optional().describe("Maximum lines to return. Default: 300."),
+    },
+    async ({ file, max_lines = 300 }) => {
+      const abs = path.join(config.repoPath, file);
+      if (!fileExists(abs)) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `File not found: ${file}\nUse find_files or list_modules to locate the correct path.`,
+            },
+          ],
+        };
+      }
+
+      const content = readFileSafe(abs) ?? "";
+      const lines = content.split("\n");
+      const total = lines.length;
+      const truncated = total > max_lines;
+      const shown = truncated ? lines.slice(0, max_lines).join("\n") : content;
+
+      const ext = path.extname(file).slice(1) || "text";
+      const lang = ext === "ts" ? "typescript" : ext === "js" ? "javascript" : ext;
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: [
+              `// ${file}  (${total} lines${truncated ? `, first ${max_lines} shown` : ""})`,
+              `\`\`\`${lang}`,
+              shown,
+              truncated
+                ? `\n// … ${total - max_lines} more lines omitted.\n// Use read_file_segment with start_line=${max_lines + 1} to continue.`
+                : "",
+              "```",
+            ]
+              .filter((l) => l !== "")
+              .join("\n"),
+          },
+        ],
+      };
+    }
+  );
+
+  // ── get_storage_schema ─────────────────────────────────────────────────────
+  server.tool(
+    "get_storage_schema",
+    "Extract all Lampa.Storage keys used across the codebase. Builds a complete map of the user-persistence model: key names, default values, which files read and write each key.",
+    {
+      scope: z
+        .enum(["all", "plugins", "src"])
+        .optional()
+        .describe("Limit the search scope. Default: 'all'."),
+      key: z.string().optional().describe("Filter to a single storage key, e.g. 'filmix_token'."),
+    },
+    async ({ scope = "all", key }) => {
+      const searchRoot =
+        scope === "plugins"
+          ? path.join(config.repoPath, "plugins")
+          : scope === "src"
+            ? path.join(config.repoPath, "src")
+            : config.repoPath;
+
+      const jsFiles = listFilesRecursive(searchRoot, [".js"]);
+
+      // key -> { defaults, readers, writers }
+      const schema: Record<
+        string,
+        { defaults: Set<string>; readers: string[]; writers: string[] }
+      > = {};
+
+      for (const file of jsFiles) {
+        const content = readFileSafe(file);
+        if (!content) continue;
+        const relFile = path.relative(config.repoPath, file);
+
+        // Lampa.Storage.get('key', default)
+        const getPat = /Lampa\.Storage\.get\(['"]([^'"]{1,60})['"](?:\s*,\s*([^)]{0,60}))?\)/g;
+        let m: RegExpExecArray | null;
+        while ((m = getPat.exec(content)) !== null) {
+          const k = m[1];
+          const def = (m[2] ?? "").trim().slice(0, 40);
+          if (key && k !== key) continue;
+          if (!schema[k]) schema[k] = { defaults: new Set(), readers: [], writers: [] };
+          if (def) schema[k].defaults.add(def);
+          if (!schema[k].readers.includes(relFile)) schema[k].readers.push(relFile);
+        }
+
+        // Lampa.Storage.set('key', ...)
+        const setPat = /Lampa\.Storage\.set\(['"]([^'"]{1,60})['"]/g;
+        while ((m = setPat.exec(content)) !== null) {
+          const k = m[1];
+          if (key && k !== key) continue;
+          if (!schema[k]) schema[k] = { defaults: new Set(), readers: [], writers: [] };
+          if (!schema[k].writers.includes(relFile)) schema[k].writers.push(relFile);
+        }
+      }
+
+      const entries = Object.entries(schema).sort(([a], [b]) => a.localeCompare(b));
+
+      if (entries.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: key
+                ? `Storage key '${key}' not found in scope '${scope}'.`
+                : `No Lampa.Storage usage found in scope '${scope}'.`,
+            },
+          ],
+        };
+      }
+
+      const rows = [
+        `# Lampa Storage Schema  (scope: ${scope}, ${entries.length} unique key${entries.length > 1 ? "s" : ""})`,
+        ``,
+        `| Key | Default(s) | Readers | Writers |`,
+        `|-----|-----------|---------|---------|`,
+        ...entries.map(([k, { defaults, readers, writers }]) => {
+          const defs = [...defaults].slice(0, 2).join(" / ") || "—";
+          return `| \`${k}\` | \`${defs}\` | ${readers.length} | ${writers.length} |`;
+        }),
+      ];
+
+      // For single key lookup, show full detail
+      if (key && entries.length === 1) {
+        const [k, { defaults, readers, writers }] = entries[0];
+        rows.push(
+          ``,
+          `## \`${k}\` — full detail`,
+          `**All defaults:** ${[...defaults].join(", ") || "none observed"}`,
+          `**Readers (${readers.length}):**`,
+          readers.map((r) => `- ${r}`).join("\n") || "none",
+          `**Writers (${writers.length}):**`,
+          writers.map((w) => `- ${w}`).join("\n") || "none"
+        );
+      }
+
+      return { content: [{ type: "text" as const, text: rows.join("\n") }] };
+    }
+  );
+
+  // ── list_all_events ────────────────────────────────────────────────────────
+  server.tool(
+    "list_all_events",
+    "Build a complete map of the Lampa.Listener event bus. Lists every event name, how many files listen to it, and how many files emit it — across the entire codebase.",
+    {
+      scope: z
+        .enum(["all", "plugins", "src"])
+        .optional()
+        .describe("Scope to search. Default: 'all'."),
+      detail: z
+        .boolean()
+        .optional()
+        .describe("Include per-file details for each event. Default: false."),
+    },
+    async ({ scope = "all", detail = false }) => {
+      const searchRoot =
+        scope === "plugins"
+          ? path.join(config.repoPath, "plugins")
+          : scope === "src"
+            ? path.join(config.repoPath, "src")
+            : config.repoPath;
+
+      const jsFiles = listFilesRecursive(searchRoot, [".js"]);
+
+      const events: Record<string, { listeners: string[]; emitters: string[] }> = {};
+
+      for (const file of jsFiles) {
+        const content = readFileSafe(file);
+        if (!content) continue;
+        const rel = path.relative(config.repoPath, file);
+
+        const followPat = /Lampa\.Listener\.follow\(['"]([\w:.-]+)['"]/g;
+        const sendPat = /Lampa\.Listener\.send\(['"]([\w:.-]+)['"]/g;
+        let m: RegExpExecArray | null;
+
+        while ((m = followPat.exec(content)) !== null) {
+          const evt = m[1];
+          if (!events[evt]) events[evt] = { listeners: [], emitters: [] };
+          if (!events[evt].listeners.includes(rel)) events[evt].listeners.push(rel);
+        }
+        while ((m = sendPat.exec(content)) !== null) {
+          const evt = m[1];
+          if (!events[evt]) events[evt] = { listeners: [], emitters: [] };
+          if (!events[evt].emitters.includes(rel)) events[evt].emitters.push(rel);
+        }
+      }
+
+      const sorted = Object.entries(events).sort(([, a], [, b]) => {
+        const ta = a.listeners.length + a.emitters.length;
+        const tb = b.listeners.length + b.emitters.length;
+        return tb - ta;
+      });
+
+      const rows = [
+        `# Lampa Event Bus  (scope: ${scope}, ${sorted.length} distinct event${sorted.length > 1 ? "s" : ""})`,
+        ``,
+        `| Event | Listeners | Emitters | Status |`,
+        `|-------|-----------|---------|--------|`,
+        ...sorted.map(([evt, { listeners, emitters }]) => {
+          const status =
+            emitters.length === 0
+              ? "⚠ no emitter found"
+              : listeners.length === 0
+                ? "⚠ no listener found"
+                : "✅";
+          return `| \`${evt}\` | ${listeners.length} | ${emitters.length} | ${status} |`;
+        }),
+      ];
+
+      if (detail) {
+        rows.push(``, `---`, `## Per-event details`);
+        for (const [evt, { listeners, emitters }] of sorted) {
+          rows.push(
+            ``,
+            `### \`${evt}\``,
+            `**Listeners:** ${listeners.length > 0 ? listeners.join(", ") : "none"}`,
+            `**Emitters:** ${emitters.length > 0 ? emitters.join(", ") : "none"}`
+          );
+        }
+      }
+
+      return { content: [{ type: "text" as const, text: rows.join("\n") }] };
+    }
+  );
+
+  // ── get_network_map ────────────────────────────────────────────────────────
+  server.tool(
+    "get_network_map",
+    "Extract all hardcoded URLs, API base URLs, and proxy patterns from the Lampa source. Reveals every external service the app communicates with.",
+    {
+      scope: z
+        .string()
+        .optional()
+        .describe(
+          "Repo-relative subfolder to search, e.g. 'plugins/online', 'plugins/iptv'. Defaults to 'plugins'."
+        ),
+    },
+    async ({ scope }) => {
+      const searchRoot = scope
+        ? path.join(config.repoPath, scope)
+        : path.join(config.repoPath, "plugins");
+
+      if (!fileExists(searchRoot)) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Path not found: ${scope}. Check with repo_overview.`,
+            },
+          ],
+        };
+      }
+
+      const jsFiles = listFilesRecursive(searchRoot, [".js"]);
+
+      // file -> { urls, proxies, embedVars }
+      const map: Record<string, { urls: string[]; proxies: string[]; embedVars: string[] }> = {};
+
+      for (const file of jsFiles) {
+        const content = readFileSafe(file);
+        if (!content) continue;
+        const rel = path.relative(config.repoPath, file);
+
+        const entry = { urls: [] as string[], proxies: [] as string[], embedVars: [] as string[] };
+
+        // Hardcoded https?:// URLs in string literals
+        const urlPat = /['"`](https?:\/\/[^'"`\s\\]{4,120})['"`]/g;
+        let m: RegExpExecArray | null;
+        while ((m = urlPat.exec(content)) !== null) {
+          const url = m[1];
+          if (!entry.urls.includes(url)) entry.urls.push(url);
+        }
+
+        // Proxy calls: component.proxy('name')
+        const proxyPat = /\.proxy\(['"]([^'"]+)['"]\)/g;
+        while ((m = proxyPat.exec(content)) !== null) {
+          if (!entry.proxies.includes(m[1])) entry.proxies.push(m[1]);
+        }
+
+        // Embed variable: let embed = '...'  (base URL variable)
+        const embedPat = /(?:let|var|const)\s+embed\s*=\s*['"`]([^'"`]+)['"`]/g;
+        while ((m = embedPat.exec(content)) !== null) {
+          if (!entry.embedVars.includes(m[1])) entry.embedVars.push(m[1]);
+        }
+
+        if (entry.urls.length > 0 || entry.proxies.length > 0 || entry.embedVars.length > 0) {
+          map[rel] = entry;
+        }
+      }
+
+      const entries = Object.entries(map);
+
+      if (entries.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No URLs or network patterns found in: ${scope ?? "plugins"}`,
+            },
+          ],
+        };
+      }
+
+      const sections = entries.map(([file, { urls, proxies, embedVars }]) => {
+        const lines = [`## ${file}`];
+        if (embedVars.length > 0) lines.push(`**Base URL (embed):** \`${embedVars.join("`, `")}\``);
+        if (proxies.length > 0) lines.push(`**Proxy names:** \`${proxies.join("`, `")}\``);
+        if (urls.length > 0) lines.push(`**Other URLs:**`, ...urls.map((u) => `- \`${u}\``));
+        return lines.join("\n");
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: [
+              `# Network Map  (scope: ${scope ?? "plugins"}, ${entries.length} files)`,
+              ``,
+              ...sections,
+            ].join("\n\n"),
+          },
+        ],
+      };
+    }
+  );
+
+  // ── validate_plugin ────────────────────────────────────────────────────────
+  server.tool(
+    "validate_plugin",
+    "Validate a Lampa plugin against established conventions: IIFE wrapping, strict mode, appready bootstrap, no localhost URLs, proper event cleanup, and more. Returns a scored report with fix guidance.",
+    {
+      plugin: z
+        .string()
+        .describe(
+          "Plugin folder name (e.g. 'iptv', 'online') or repo-relative path to a plugin JS file."
+        ),
+    },
+    async ({ plugin }) => {
+      const rp = config.repoPath;
+
+      // Resolve entry point
+      let targetFile: string | null = null;
+
+      const asPath = path.join(rp, plugin);
+      if (fileExists(asPath) && asPath.endsWith(".js")) {
+        targetFile = asPath;
+      } else {
+        const pluginDir = path.join(rp, "plugins", plugin);
+        if (fileExists(pluginDir)) {
+          const candidates = [
+            path.join(pluginDir, "main.js"),
+            path.join(pluginDir, `${plugin}.js`),
+          ];
+          for (const c of candidates) {
+            if (fileExists(c)) {
+              targetFile = c;
+              break;
+            }
+          }
+          if (!targetFile) {
+            const jsFiles = listFilesRecursive(pluginDir, [".js"]);
+            targetFile = jsFiles[0] ?? null;
+          }
+        }
+      }
+
+      if (!targetFile) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                `Plugin "${plugin}" not found.`,
+                `Available: ${fs
+                  .readdirSync(path.join(rp, "plugins"), { withFileTypes: true })
+                  .filter((e) => e.isDirectory())
+                  .map((e) => e.name)
+                  .join(", ")}`,
+              ].join("\n"),
+            },
+          ],
+        };
+      }
+
+      const content = readFileSafe(targetFile) ?? "";
+      const rel = path.relative(rp, targetFile);
+      const lines = content.split("\n");
+
+      const checks: Array<{
+        name: string;
+        pass: boolean;
+        severity: "error" | "warn" | "info";
+        fix: string;
+      }> = [
+        {
+          name: "IIFE wrapper `(function() { ... })()`",
+          pass: /\(function\s*\(/.test(content),
+          severity: "error",
+          fix: "Wrap the entire plugin in `(function() { 'use strict'; ... })();` to prevent global scope pollution.",
+        },
+        {
+          name: "`'use strict'` declaration",
+          pass: content.includes("'use strict'") || content.includes('"use strict"'),
+          severity: "warn",
+          fix: "Add `'use strict';` as the first statement inside the IIFE.",
+        },
+        {
+          name: "Bootstraps on `appready`",
+          pass: content.includes("appready"),
+          severity: "error",
+          fix: "Use `if (window.appready) init(); else $(document).on('appready', init);` — never call Lampa APIs before the app is ready.",
+        },
+        {
+          name: "No hardcoded `localhost` URLs",
+          pass: !content.includes("localhost"),
+          severity: "error",
+          fix: "Remove localhost URLs. Use environment-relative paths or a configurable base URL from Lampa.Storage.",
+        },
+        {
+          name: "No `document.write()`",
+          pass: !content.includes("document.write"),
+          severity: "error",
+          fix: "Replace document.write() with Lampa.Template / jQuery DOM manipulation.",
+        },
+        {
+          name: "No `eval()` usage",
+          pass: !/\beval\s*\(/.test(content),
+          severity: "error",
+          fix: "Remove eval(). It triggers CSP violations and is a security risk.",
+        },
+        {
+          name: "Uses `Lampa.Lang` for UI strings",
+          pass: content.includes("Lampa.Lang"),
+          severity: "warn",
+          fix: "Replace hardcoded UI strings with Lampa.Lang.translate('key') for i18n support.",
+        },
+        {
+          name: "Has a named `init()` function",
+          pass: /function\s+init\s*\(|var\s+init\s*=\s*function|const\s+init\s*=/.test(content),
+          severity: "info",
+          fix: "Define a clear `function init()` entry point for readability and testability.",
+        },
+        {
+          name: "Settings icon provided",
+          pass: !content.includes("Lampa.Settings.add") || content.includes("icon:"),
+          severity: "info",
+          fix: "Add an `icon: '<svg>...</svg>'` property to your Lampa.Settings.add() call.",
+        },
+        {
+          name: "Storage keys use plugin prefix",
+          pass: (() => {
+            // Check if any Storage.get key doesn't start with a plausible prefix
+            const storageKeys: string[] = [];
+            const pat = /Lampa\.Storage\.get\(['"]([^'"]+)['"]/g;
+            let m: RegExpExecArray | null;
+            while ((m = pat.exec(content)) !== null) storageKeys.push(m[1]);
+            if (storageKeys.length === 0) return true;
+            const pluginBase = path.basename(rel, ".js").split(/[/_]/)[0];
+            return storageKeys.every(
+              (k) => k.startsWith(pluginBase) || k.startsWith("video_") || k.startsWith("online_")
+            );
+          })(),
+          severity: "info",
+          fix: `Prefix storage keys with the plugin name (e.g. '${plugin}_key') to avoid conflicts with other plugins.`,
+        },
+      ];
+
+      const errors = checks.filter((c) => !c.pass && c.severity === "error");
+      const warns = checks.filter((c) => !c.pass && c.severity === "warn");
+      const passed = checks.filter((c) => c.pass);
+      const score = Math.round((passed.length / checks.length) * 100);
+      const scoreIcon = score === 100 ? "✅" : score >= 70 ? "🟡" : "🔴";
+
+      const out = [
+        `# Plugin Validation: ${rel}`,
+        `**Score:** ${scoreIcon} ${score}% (${passed.length}/${checks.length} checks passed)`,
+        `**Lines:** ${lines.length}`,
+        ``,
+        `## Results`,
+        ...checks.map((c) => {
+          const icon = c.pass
+            ? "✅"
+            : c.severity === "error"
+              ? "❌"
+              : c.severity === "warn"
+                ? "⚠️"
+                : "ℹ️";
+          return `${icon} **${c.name}**${c.pass ? "" : `\n   → ${c.fix}`}`;
+        }),
+        errors.length > 0
+          ? `\n## Errors to fix (${errors.length})\n${errors.map((c) => `- **${c.name}**: ${c.fix}`).join("\n")}`
+          : "",
+        warns.length > 0
+          ? `\n## Warnings (${warns.length})\n${warns.map((c) => `- **${c.name}**: ${c.fix}`).join("\n")}`
+          : "",
+      ]
+        .filter((l) => l !== "")
+        .join("\n");
+
+      return { content: [{ type: "text" as const, text: out }] };
+    }
+  );
+
+  // ── extract_template_html ──────────────────────────────────────────────────
+  server.tool(
+    "extract_template_html",
+    "Extract the actual HTML markup from Lampa template files (src/templates/*.js). Shows template structure, CSS classes, data-binding placeholders, and data attributes. Useful for understanding UI structure without running the app.",
+    {
+      name: z
+        .string()
+        .describe(
+          "Template name to find, e.g. 'card', 'modal', 'player', 'settings'. Matches by filename."
+        ),
+    },
+    async ({ name }) => {
+      const templatesDir = path.join(config.repoPath, "src", "templates");
+      if (!fileExists(templatesDir)) {
+        return {
+          content: [{ type: "text" as const, text: "src/templates/ directory not found." }],
+        };
+      }
+
+      const allFiles = listFilesRecursive(templatesDir, [".js"]);
+      const lower = name.toLowerCase();
+      const matches = allFiles.filter(
+        (f) =>
+          path.basename(f, ".js").toLowerCase() === lower ||
+          path.basename(f).toLowerCase().includes(lower)
+      );
+
+      if (matches.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No template matching "${name}" in src/templates/.\nUse list_templates to see all available template names.`,
+            },
+          ],
+        };
+      }
+
+      const results = matches.slice(0, 4).map((file) => {
+        const content = readFileSafe(file) ?? "";
+        const rel = path.relative(config.repoPath, file);
+
+        // Extract the template literal (between first ` and last `)
+        const tlMatch = content.match(/`([\s\S]+?)`/);
+        const html = tlMatch ? tlMatch[1].trim() : content.trim();
+
+        // Extract CSS classes
+        const classSet = new Set<string>();
+        const classPat = /class="([^"]+)"/g;
+        let m: RegExpExecArray | null;
+        while ((m = classPat.exec(html)) !== null) {
+          m[1].split(/\s+/).forEach((c) => classSet.add(c));
+        }
+
+        // Extract {placeholder} bindings
+        const bindingSet = new Set<string>();
+        const bindPat = /\{([a-z_][a-z0-9_]*)\}/g;
+        while ((m = bindPat.exec(html)) !== null) {
+          bindingSet.add(`{${m[1]}}`);
+        }
+
+        // Extract data-* attributes
+        const dataSet = new Set<string>();
+        const dataPat = /data-([a-z][a-z0-9-]*)/g;
+        while ((m = dataPat.exec(html)) !== null) {
+          dataSet.add(`data-${m[1]}`);
+        }
+
+        const meta: string[] = [];
+        if (classSet.size > 0)
+          meta.push(`**CSS classes (${classSet.size}):** \`${[...classSet].join("`, `")}\``);
+        if (bindingSet.size > 0)
+          meta.push(`**Data bindings:** \`${[...bindingSet].join("`, `")}\``);
+        if (dataSet.size > 0) meta.push(`**Data attributes:** \`${[...dataSet].join("`, `")}\``);
+
+        return [
+          `## ${rel}`,
+          meta.join("\n"),
+          ``,
+          `\`\`\`html`,
+          html.slice(0, 3000),
+          html.length > 3000 ? `\n<!-- …truncated -->` : "",
+          `\`\`\``,
+        ]
+          .filter((l) => l !== "")
+          .join("\n");
+      });
+
+      return {
+        content: [{ type: "text" as const, text: results.join("\n\n") }],
+      };
+    }
+  );
+
+  // ── get_core_module ────────────────────────────────────────────────────────
+  server.tool(
+    "get_core_module",
+    "Read a Lampa core module from src/core/. Core modules implement the fundamental Lampa APIs (storage, lang, player, api, component, etc.). Lists all available modules when no name is given.",
+    {
+      name: z
+        .string()
+        .optional()
+        .describe(
+          "Module name, e.g. 'lang', 'storage', 'player', 'api', 'component'. Omit to list all."
+        ),
+      max_lines: z.number().optional().describe("Max lines to return. Default: 250."),
+    },
+    async ({ name, max_lines = 250 }) => {
+      const coreDir = path.join(config.repoPath, "src", "core");
+      if (!fileExists(coreDir)) {
+        return {
+          content: [{ type: "text" as const, text: "src/core/ not found in repository." }],
+        };
+      }
+
+      if (!name) {
+        // List all modules grouped by file vs. directory
+        const entries = fs
+          .readdirSync(coreDir, { withFileTypes: true })
+          .sort((a, b) => a.name.localeCompare(b.name));
+        const dirs = entries.filter((e) => e.isDirectory()).map((e) => `📁 ${e.name}/`);
+        const files = entries.filter((e) => !e.isDirectory()).map((e) => `📄 ${e.name}`);
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                `# src/core/  (${entries.length} items)`,
+                ``,
+                `## Subdirectories`,
+                dirs.join("\n") || "none",
+                ``,
+                `## Files`,
+                files.join("\n") || "none",
+                ``,
+                `Use the \`name\` parameter to read a specific module, e.g. name="lang".`,
+              ].join("\n"),
+            },
+          ],
+        };
+      }
+
+      const lower = name.toLowerCase().replace(/\.js$/, "");
+      const allFiles = listFilesRecursive(coreDir, [".js"]);
+      const match =
+        allFiles.find((f) => path.basename(f, ".js").toLowerCase() === lower) ??
+        allFiles.find((f) => path.basename(f).toLowerCase().includes(lower));
+
+      if (!match) {
+        const available = allFiles.map((f) => path.basename(f, ".js")).join(", ");
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Module "${name}" not found in src/core/.\nAvailable: ${available}`,
+            },
+          ],
+        };
+      }
+
+      const content = readFileSafe(match) ?? "";
+      const lines = content.split("\n");
+      const truncated = lines.length > max_lines;
+      const shown = truncated ? lines.slice(0, max_lines).join("\n") : content;
+      const rel = path.relative(config.repoPath, match);
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: [
+              `# ${rel}  (${lines.length} lines${truncated ? `, first ${max_lines} shown` : ""})`,
+              ``,
+              "```javascript",
+              shown,
+              truncated
+                ? `\n// … ${lines.length - max_lines} more lines.\n// Use read_file_segment with start_line=${max_lines + 1} to continue.`
+                : "",
+              "```",
+            ].join("\n"),
+          },
+        ],
+      };
+    }
+  );
+
+  // ── explain_lampa_pattern ──────────────────────────────────────────────────
+  server.tool(
+    "explain_lampa_pattern",
+    "Get a detailed explanation and real extracted code examples for any core Lampa development pattern. Combines a written guide with live source examples — the fastest way to understand how Lampa works.",
+    {
+      pattern: z
+        .enum([
+          "iife-plugin",
+          "storage",
+          "settings",
+          "events",
+          "component",
+          "request",
+          "template",
+          "activity",
+          "player-hook",
+        ])
+        .describe(
+          "Pattern to explain: iife-plugin | storage | settings | events | component | request | template | activity | player-hook"
+        ),
+    },
+    async ({ pattern }) => {
+      const rp = config.repoPath;
+
+      type PatternMeta = {
+        title: string;
+        description: string;
+        searchFor: string;
+        searchIn: string;
+        keyPoints: string[];
+      };
+
+      const patterns: Record<string, PatternMeta> = {
+        "iife-plugin": {
+          title: "IIFE Plugin Pattern",
+          description:
+            "All Lampa plugins must be self-contained IIFEs that bootstrap via the `appready` DOM event. This prevents global scope pollution and ensures Lampa APIs are ready before use.",
+          searchFor: "(function()",
+          searchIn: "plugins",
+          keyPoints: [
+            "- Wrap the entire plugin: `(function() { 'use strict'; ... })()`",
+            "- Define an `init()` function for all startup logic",
+            "- Bootstrap: `if (window.appready) init(); else $(document).on('appready', init);`",
+            "- Never call Lampa APIs outside of `init()` or event handlers",
+            "- Use `var` (not `let`/`const`) for maximum TV browser compatibility unless transpiling",
+          ],
+        },
+        storage: {
+          title: "Lampa.Storage Pattern",
+          description:
+            "Lampa.Storage is the primary key-value persistence API, backed by localStorage. Use it for all user preferences and plugin state that should survive across sessions.",
+          searchFor: "Lampa.Storage.get(",
+          searchIn: "plugins",
+          keyPoints: [
+            "- Read: `var val = Lampa.Storage.get('my_key', defaultValue);`",
+            "- Write: `Lampa.Storage.set('my_key', value);`",
+            "- Prefix keys with plugin name: `'myplugin_setting'` to avoid collisions",
+            "- Watch changes: `Lampa.Storage.listener.follow('change', fn);`",
+            "- Values must be JSON-serializable; use JSON.stringify/parse for objects",
+            "- Default values are returned (not stored) when the key doesn't exist",
+          ],
+        },
+        settings: {
+          title: "Lampa.Settings + Lampa.SettingsApi Pattern",
+          description:
+            "The Settings API lets plugins register their own settings panels and individual controls (toggles, selects, inputs) that appear in the Lampa settings UI.",
+          searchFor: "Lampa.Settings.add(",
+          searchIn: "plugins",
+          keyPoints: [
+            "- Register a section: `Lampa.Settings.add('id', { component, name, icon })`",
+            "- Add controls via `Lampa.SettingsApi.add({ component, param, field, onChange })`",
+            "- param.type options: `'trigger'` (boolean toggle), `'select'`, `'input'`, `'button'`",
+            "- `onChange(value)` is called immediately when user changes the setting",
+            "- Read saved value: `Lampa.Storage.get(param.name, param.default)`",
+            "- Always register settings inside `init()` after app is ready",
+          ],
+        },
+        events: {
+          title: "Lampa.Listener Event Pattern",
+          description:
+            "Lampa uses a pub/sub event bus via Lampa.Listener. Plugins should prefer hooking into events over patching core functions.",
+          searchFor: "Lampa.Listener.follow(",
+          searchIn: "plugins",
+          keyPoints: [
+            "- Listen: `Lampa.Listener.follow('event_name', function(e) { ... });`",
+            "- Emit: `Lampa.Listener.send('event_name', { type: 'action', ...data });`",
+            "- Always check `e.type` — events carry a typed payload, not just a name",
+            "- Common events: `app` (types: start/ready), `full` (complite/destroy), `player`, `catalog`",
+            "- Plugin-specific events should use unique prefixed names (e.g. `myplugin_done`)",
+            "- Use `trace_event` tool to find all files that use a given event",
+          ],
+        },
+        component: {
+          title: "Lampa Component Lifecycle Pattern",
+          description:
+            "UI components follow a defined lifecycle managed by Lampa. Correct implementation of lifecycle methods is critical for back-navigation and memory management on TV hardware.",
+          searchFor: "this.create",
+          searchIn: "src/components",
+          keyPoints: [
+            "- `create()` → returns a jQuery DOM element (the component's root)",
+            "- `render()` → populates the DOM after the element is attached",
+            "- `start()` → called when the component gains focus; enable controllers here",
+            "- `pause()` / `stop()` → component loses focus; stop timers",
+            "- `destroy()` → MUST clean up ALL event listeners, timers, and DOM references",
+            "- Register component: `Lampa.Component.add('name', ConstructorFn)`",
+            "- Push to navigation: `Lampa.Activity.push({ component: 'name', ... })`",
+          ],
+        },
+        request: {
+          title: "Lampa.Reguest Network Pattern",
+          description:
+            "Lampa.Reguest is the recommended HTTP client for plugins. It handles TV-friendly error recovery, proxy routing, and request cancellation.",
+          searchFor: "new Lampa.Reguest",
+          searchIn: "plugins",
+          keyPoints: [
+            "- Create: `var network = new Lampa.Reguest();`",
+            "- Fetch: `network.silent(url, onSuccess, onError, options);`",
+            "- Always call `network.clear()` before a new request to cancel pending ones",
+            "- Use `component.proxy('name')` to prepend the proxy URL for CORS bypass",
+            "- `network.timeout(ms)` sets a custom timeout (default is generous for slow TVs)",
+            "- Never use `fetch()` or `$.ajax()` directly — use Lampa.Reguest for proper proxy support",
+          ],
+        },
+        template: {
+          title: "Lampa.Template Pattern",
+          description:
+            "Templates are named HTML strings registered centrally. Plugins retrieve DOM elements via the template system, keeping HTML out of JS strings.",
+          searchFor: "Lampa.Template.get(",
+          searchIn: "plugins",
+          keyPoints: [
+            "- Register: `Lampa.Template.add('my_tpl', '<div class=\"...\">{title}</div>')`",
+            "- Retrieve DOM: `var el = Lampa.Template.get('my_tpl', { title: movie.title });`",
+            "- Placeholders use `{key}` syntax in the HTML string",
+            "- Templates in src/templates/*.js are auto-registered by the app",
+            "- Use `extract_template_html` tool to inspect existing template HTML",
+            "- Register templates early (inside `init()`) before any component creates them",
+          ],
+        },
+        activity: {
+          title: "Lampa.Activity Navigation Pattern",
+          description:
+            "Lampa.Activity manages the navigation stack — the back-button history essential for TV remote control. Every screen push creates an activity entry.",
+          searchFor: "Lampa.Activity.push",
+          searchIn: "plugins",
+          keyPoints: [
+            "- Push screen: `Lampa.Activity.push({ url, title, component: 'name', object: data })`",
+            "- The activity stack drives remote back-button behavior",
+            "- Each activity gets `activity.view` (jQuery element) after creation",
+            "- Go back: `Lampa.Activity.backward()`",
+            "- Listen to changes: `Lampa.Activity.listener.follow('activity', fn)`",
+            "- Never push multiple activities without user interaction — it breaks back-nav",
+          ],
+        },
+        "player-hook": {
+          title: "Player Hook Pattern",
+          description:
+            "Hooking into the player lifecycle allows plugins to extend playback, track watch time, inject overlay UI, or modify streams before they play.",
+          searchFor: "Lampa.Listener.follow('player'",
+          searchIn: "plugins",
+          keyPoints: [
+            "- `Lampa.Listener.follow('player', function(e) { ... })` — hook the player",
+            "- Event types: `start`, `end`, `pause`, `resume`, `destroy`, `timeupdate`",
+            "- Access the player instance via `e.object`",
+            "- For UI injection: inject on `start`, clean up on `destroy`",
+            "- Use `Lampa.Listener.follow('torrent_file', fn)` for torrent player events",
+            "- Avoid heavy computation in `timeupdate` — it fires very frequently",
+          ],
+        },
+      };
+
+      const meta = patterns[pattern];
+      if (!meta) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Unknown pattern: ${pattern}. Valid options: ${Object.keys(patterns).join(", ")}`,
+            },
+          ],
+        };
+      }
+
+      const searchRoot = path.join(rp, meta.searchIn);
+      const hits = searchCode(searchRoot, meta.searchFor, ["*.js"], false).slice(0, 10);
+
+      // Build snippets (up to 3 distinct files, ~12 lines of context)
+      const examples: string[] = [];
+      const seenFiles = new Set<string>();
+      for (const hit of hits) {
+        if (seenFiles.size >= 3) break;
+        if (seenFiles.has(hit.file)) continue;
+        seenFiles.add(hit.file);
+
+        const abs = path.join(rp, hit.file);
+        const fileContent = readFileSafe(abs);
+        if (!fileContent) continue;
+
+        const fileLines = fileContent.split("\n");
+        const start = Math.max(0, hit.line - 2);
+        const end = Math.min(fileLines.length, hit.line + 12);
+        const snippet = fileLines.slice(start, end).join("\n");
+
+        examples.push(
+          `### From \`${hit.file}\` (line ${hit.line})\n\`\`\`javascript\n${snippet}\n\`\`\``
+        );
+      }
+
+      const out = [
+        `# ${meta.title}`,
+        ``,
+        meta.description,
+        ``,
+        `## Key rules`,
+        meta.keyPoints.join("\n"),
+        ``,
+        `## Live examples from Lampa source`,
+        examples.length > 0
+          ? examples.join("\n\n")
+          : `No examples found searching for \`${meta.searchFor}\` in \`${meta.searchIn}\`.`,
+        ``,
+        `---`,
+        `> Use \`search_code\` with query \`${meta.searchFor}\` for more instances.`,
+      ].join("\n");
+
+      return { content: [{ type: "text" as const, text: out }] };
+    }
+  );
+}
