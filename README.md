@@ -8,7 +8,7 @@ It gives AI agents (Claude, Cursor, etc.) structured, read-only access to the La
 
 ## What it does
 
-The server exposes **51 tools** and **5 resources** across eight capability layers:
+The server exposes **57 tools** and **6 resources** across nine capability layers:
 
 | Layer | File | Tools | Purpose |
 |---|---|---|---|
@@ -19,7 +19,8 @@ The server exposes **51 tools** and **5 resources** across eight capability laye
 | Validation | `validation.ts` | 4 | Quality checks, find tests, resolve build commands, query docs |
 | Lampa Deep | `lampa_deep.ts` | 8 | Deep Lampa-specific analysis: providers, events, translations, lifecycle |
 | Advanced | `advanced.ts` | 8 | File reads, storage schema, event bus map, network map, pattern guide |
-| Lampa Modern | `lampa_modern.ts` | 10 | Maker modules, CUB API, WebSocket, components, settings, packaging |
+| Lampa Modern | `lampa_modern.ts` | 10 | Maker modules, CUB API (Lampa subset), WebSocket, components, settings, packaging |
+| CUB API | `cub.ts` | 6 | Full CUB API surface from Lampa source: catalog, auth, sync, data models |
 
 ---
 
@@ -92,6 +93,14 @@ The server exposes **51 tools** and **5 resources** across eight capability laye
 - `manifest_mirrors_map` — cub_mirrors, soc_mirrors, cub_domain resolution logic
 - `upgrade_migration_checker` — detect deprecated 2.x APIs (Lampa.Card, InteractionMain, etc.) in a file
 
+**CUB API** (from [Lampa source](temp/lampa-source) — [CUB developer docs](https://cub.rip/developer/))
+- `cub_api_catalog` — full CUB API catalog extracted from Lampa (account, bookmarks, timeline, AI, collections, TMDB proxy, plugins, WebSocket)
+- `cub_endpoint_detail` — single endpoint with source file, code context, feature gates
+- `cub_auth_guide` — device/add login, token/profile headers, Permit gating, Premium, mirrors
+- `cub_data_models` — bookmark types, timeline storage, favorite categories, sync shapes
+- `cub_sync_guide` — bookmark/timeline/storage sync: REST dump/changelog + WebSocket
+- `cub_timeline_hash_guide` — Utils.hash() algorithm for watch progress keys
+
 ---
 
 ### Resources
@@ -103,6 +112,7 @@ The server exposes **51 tools** and **5 resources** across eight capability laye
 | `docs://index` | Generated JSDoc (requires `npm run doc` in the Lampa repo) |
 | `settings://catalog` | All `Lampa.Settings.add` registrations in the repo |
 | `api://integrations` | All API and network call sites |
+| `cub://lampa-api` | CUB API endpoints JSON extracted from Lampa source |
 
 ---
 
@@ -187,8 +197,15 @@ repo_overview → find_feature → module_dependency_map
 For deep plugin work, start with the single-call analysis tools:
 
 ```
-plugin_deep_dive → maker_module_map → trace_event → get_storage_schema
-    → plan_feature_change → draft_patch → validate_plugin → upgrade_migration_checker
+plugin_deep_dive → maker_module_map → cub_api_catalog
+    → plan_feature_change → draft_patch → validate_plugin
+```
+
+For CUB account/sync work:
+
+```
+cub_auth_guide → cub_api_catalog → cub_sync_guide
+    → cub_data_models → cub_endpoint_detail
 ```
 
 **System prompt for best results:**
@@ -206,13 +223,14 @@ plugin_deep_dive → maker_module_map → trace_event → get_storage_schema
 ```
 src/
 ├── index.ts               # Server entry point
-├── config.ts              # Repo path config (LAMPA_REPO_PATH env var)
+├── config.ts              # LAMPA_REPO_PATH + CUBCTL_PATH config
 ├── utils/
 │   ├── fs.ts              # File system helpers
 │   ├── search.ts          # ripgrep + Node fallback search
 │   ├── lampa.ts           # Lampa-specific patterns, feature map, risk patterns
 │   ├── lampa_deep.ts      # Deep analysis utilities (events, lifecycle, providers)
-│   └── lampa_modern.ts    # Lampa 3.0 architecture extractors (Maker, CUB, socket)
+│   ├── lampa_modern.ts    # Lampa 3.0 architecture extractors (Maker, CUB subset, socket)
+│   └── cub.ts             # CUB API extraction from Lampa source (scanner + metadata)
 ├── tools/
 │   ├── discovery.ts       # Phase 1 — repo navigation (6 tools)
 │   ├── analysis.ts        # Phase 2 — Lampa understanding (7 tools)
@@ -221,9 +239,10 @@ src/
 │   ├── validation.ts      # Phase 5 — quality checks (4 tools)
 │   ├── lampa_deep.ts      # Lampa-specific deep analysis (8 tools)
 │   ├── advanced.ts        # File I/O, schema, pattern guide (8 tools)
-│   └── lampa_modern.ts    # Lampa 3.0 architecture tools (10 tools)
+│   ├── lampa_modern.ts    # Lampa 3.0 architecture tools (10 tools)
+│   └── cub.ts             # CUB API extraction from Lampa source (6 tools)
 └── resources/
-    └── index.ts           # MCP resources (5 read-only stable context endpoints)
+    └── index.ts           # MCP resources (6 read-only stable context endpoints)
 ```
 
 ---

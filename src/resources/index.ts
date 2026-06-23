@@ -4,6 +4,7 @@ import fs from "node:fs";
 import type { Config } from "../config.js";
 import { readFileSafe, fileExists } from "../utils/fs.js";
 import { findSettingsInRepo, findApiCallsInRepo } from "../utils/lampa.js";
+import { extractLampaCubApi } from "../utils/cub.js";
 
 interface PackageJson {
   name?: string;
@@ -88,6 +89,22 @@ export function registerResources(server: McpServer, config: Config): void {
     async () => {
       const result = findApiCallsInRepo(config.repoPath);
       return { contents: [{ uri: "api://integrations", text: result }] };
+    }
+  );
+
+  // resource://cub/lampa-api
+  server.resource(
+    "cub-lampa-api",
+    "cub://lampa-api",
+    {
+      mimeType: "application/json",
+      description: "CUB API endpoints catalog extracted from Lampa source.",
+    },
+    async () => {
+      const endpoints = extractLampaCubApi(config.repoPath);
+      return {
+        contents: [{ uri: "cub://lampa-api", text: JSON.stringify(endpoints, null, 2) }],
+      };
     }
   );
 }

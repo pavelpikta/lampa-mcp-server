@@ -34,7 +34,6 @@ export function extractMakerClasses(repoPath: string): MakerClassInfo[] {
   const unique = [...new Set(classNames)];
 
   return unique.map((name) => {
-    const base = path.join(repoPath, "src", "interaction");
     const lower = name.toLowerCase();
 
     const candidates = [
@@ -133,58 +132,6 @@ export function extractMakerClasses(repoPath: string): MakerClassInfo[] {
 
     return { name, classPath: classRel, modulePath: moduleRel, mapPath: mapRel, mapHooks };
   });
-}
-
-// ── CUB REST API ───────────────────────────────────────────────────────────
-
-export interface CubEndpoint {
-  path: string;
-  method: "GET" | "POST" | "unknown";
-  file: string;
-  line: number;
-  context: string;
-}
-
-export function extractCubApiEndpoints(repoPath: string): CubEndpoint[] {
-  const srcDir = path.join(repoPath, "src");
-  if (!fileExists(srcDir)) return [];
-
-  const files = listFilesRecursive(srcDir, [".js"]);
-  const endpoints: CubEndpoint[] = [];
-  const seen = new Set<string>();
-
-  for (const file of files) {
-    const content = readFileSafe(file);
-    if (!content) continue;
-    const rel = path.relative(repoPath, file);
-    const lines = content.split("\n");
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const loadMatch = line.match(/(?:Api\.)?load\(\s*['"]([^'"]+)['"]/);
-      if (!loadMatch) continue;
-
-      const ep = loadMatch[1].split("?")[0].replace(/\/$/, "");
-      const key = `${ep}@${rel}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      const isPost =
-        line.includes(", {},") ||
-        line.includes(",{}, ") ||
-        lines.slice(i, i + 3).some((l) => l.includes("post") && l.includes("true"));
-
-      endpoints.push({
-        path: ep,
-        method: isPost ? "POST" : "GET",
-        file: rel,
-        line: i + 1,
-        context: line.trim().slice(0, 100),
-      });
-    }
-  }
-
-  return endpoints.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 // ── WebSocket protocol ───────────────────────────────────────────────────────

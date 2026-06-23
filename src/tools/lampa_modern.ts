@@ -3,10 +3,8 @@ import { z } from "zod";
 import path from "node:path";
 import type { Config } from "../config.js";
 import { readFileSafe, fileExists } from "../utils/fs.js";
-import { searchCode } from "../utils/search.js";
 import {
   extractMakerClasses,
-  extractCubApiEndpoints,
   extractSocketProtocol,
   extractComponentRegistry,
   extractLampaSettingsFlags,
@@ -76,64 +74,6 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
       ];
 
       return { content: [{ type: "text" as const, text: rows.join("\n") }] };
-    }
-  );
-
-  // ── cub_api_catalog ────────────────────────────────────────────────────────
-  server.tool(
-    "cub_api_catalog",
-    "Catalog all CUB cloud REST API endpoints used in the Lampa source. Shows path, HTTP method, and source file. Base URL: {protocol}://{cub_domain}/api/ with token + profile headers.",
-    {
-      filter: z
-        .string()
-        .optional()
-        .describe("Filter endpoints by path substring, e.g. 'bookmarks', 'timeline', 'ai'."),
-    },
-    async ({ filter }) => {
-      let endpoints = extractCubApiEndpoints(config.repoPath);
-      if (filter) {
-        const lower = filter.toLowerCase();
-        endpoints = endpoints.filter((e) => e.path.toLowerCase().includes(lower));
-      }
-
-      if (endpoints.length === 0) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: filter
-                ? `No CUB API endpoints matching "${filter}".`
-                : "No CUB API endpoints found in src/.",
-            },
-          ],
-        };
-      }
-
-      const grouped: Record<string, typeof endpoints> = {};
-      for (const ep of endpoints) {
-        const group = ep.path.split("/")[0];
-        if (!grouped[group]) grouped[group] = [];
-        grouped[group].push(ep);
-      }
-
-      const sections = Object.entries(grouped)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([group, eps]) => {
-          const lines = eps.map((e) => `- \`${e.method} ${e.path}\` — ${e.file}:${e.line}`);
-          return `### ${group}\n${lines.join("\n")}`;
-        });
-
-      const out = [
-        `# CUB API Catalog  (${endpoints.length} endpoint${endpoints.length > 1 ? "s" : ""})`,
-        ``,
-        `**Base URL:** \`Utils.protocol() + Manifest.cub_domain + '/api/'\``,
-        `**Auth headers:** \`token\`, \`profile\` (from account session)`,
-        `**Requires:** \`Account.Permit.token\` — returns 403 otherwise`,
-        ``,
-        ...sections,
-      ].join("\n\n");
-
-      return { content: [{ type: "text" as const, text: out }] };
     }
   );
 
