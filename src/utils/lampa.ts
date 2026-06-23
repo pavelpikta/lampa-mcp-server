@@ -22,6 +22,13 @@ export const LAMPA_FEATURE_MAP: Record<string, string[]> = {
   ui: ["src/templates", "src/core/component.js", "src/interaction"],
   navigation: ["public/vender/navigator", "src/core"],
   notifications: ["public/vender/notify", "src/core"],
+  maker: ["src/interaction/maker.js", "src/utils/mask.js", "UPGRADE.md"],
+  account: ["src/core/account", "src/core/socket.js"],
+  sync: ["src/core/socket.js", "src/core/account/bookmarks.js", "src/core/account/timeline.js"],
+  content_rows: ["src/core/content_rows.js", "src/core/favorite.js"],
+  mirrors: ["src/core/manifest.js", "src/core/mirrors.js"],
+  ai: ["src/core/api/sources/ai.js"],
+  router: ["src/core/router.js", "src/interaction/activity"],
 };
 
 export const LAMPA_RISKY_PATTERNS = [

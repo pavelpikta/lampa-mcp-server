@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Config } from "../config.js";
 import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
 import { searchCode, getImports } from "../utils/search.js";
+import { parseLangFile } from "../utils/lampa_deep.js";
 import {
   findSettingsInRepo,
   findApiCallsInRepo,
@@ -91,8 +92,23 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
         .describe("Specific translation key to look up, e.g. 'settings_language'."),
     },
     async ({ key }) => {
-      const langDir = path.join(config.repoPath, "public", "lang");
-      const langFiles = fileExists(langDir) ? listFilesRecursive(langDir, [".js"]) : [];
+      const srcLangDir = path.join(config.repoPath, "src", "lang");
+      const pubLangDir = path.join(config.repoPath, "public", "lang");
+      const langDir = fileExists(srcLangDir)
+        ? srcLangDir
+        : fileExists(pubLangDir)
+          ? pubLangDir
+          : null;
+
+      if (!langDir) {
+        return {
+          content: [
+            { type: "text", text: "No lang directory found (checked src/lang/ and public/lang/)." },
+          ],
+        };
+      }
+
+      const langFiles = listFilesRecursive(langDir, [".js"]).filter((f) => !f.endsWith("meta.js"));
 
       if (key) {
         const results: string[] = [];
@@ -106,30 +122,29 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
             }
           }
         }
-        return {
-          content: [{ type: "text", text: results.join("\n") || `Key "${key}" not found.` }],
-        };
+        const usages = searchCode(config.repoPath, `Lang.translate('${key}'`, ["*.js"], false)
+          .concat(searchCode(config.repoPath, `Lang.translate("${key}"`, ["*.js"], false))
+          .slice(0, 10)
+          .map((m) => `${m.file}:${m.line}  ${m.text.trim()}`);
+
+        const out = [
+          results.length > 0 ? results.join("\n") : `Key "${key}" not found in lang files.`,
+          usages.length > 0 ? `\n## Usages\n${usages.join("\n")}` : "",
+        ].join("\n");
+
+        return { content: [{ type: "text", text: out }] };
       }
 
-      // List all keys from the English lang file
       const enFile = path.join(langDir, "en.js");
-      const enContent = readFileSafe(enFile);
-      if (!enContent) {
-        return { content: [{ type: "text", text: `No lang/en.js found at ${enFile}.` }] };
-      }
-
-      const keyPattern = /['"]([a-z_]+)['"]\s*:/g;
-      const keys: string[] = [];
-      let m: RegExpExecArray | null;
-      while ((m = keyPattern.exec(enContent)) !== null) {
-        keys.push(m[1]);
-      }
+      const keys = parseLangFile(enFile);
       const langFilenames = langFiles.map((f) => path.basename(f));
+      const relDir = path.relative(config.repoPath, langDir);
+
       return {
         content: [
           {
             type: "text",
-            text: `Language files: ${langFilenames.join(", ")}\n\nKeys in en.js (${keys.length}):\n${keys.join(", ")}`,
+            text: `Language directory: ${relDir}/\nFiles: ${langFilenames.join(", ")}\n\nKeys in en.js (${keys.length}):\n${keys.join(", ")}`,
           },
         ],
       };

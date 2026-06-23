@@ -8,13 +8,14 @@ import { registerEditingTools } from "./tools/editing.js";
 import { registerValidationTools } from "./tools/validation.js";
 import { registerLampaDeepTools } from "./tools/lampa_deep.js";
 import { registerAdvancedTools } from "./tools/advanced.js";
+import { registerLampaModernTools } from "./tools/lampa_modern.js";
 import { registerResources } from "./resources/index.js";
 
 const config = getConfig();
 
 const server = new McpServer({
   name: "lampa-mcp-server",
-  version: "1.0.0",
+  version: "1.1.0",
 });
 
 registerDiscoveryTools(server, config);
@@ -24,6 +25,7 @@ registerEditingTools(server, config);
 registerValidationTools(server, config);
 registerLampaDeepTools(server, config);
 registerAdvancedTools(server, config);
+registerLampaModernTools(server, config);
 registerResources(server, config);
 
 const transport = new StdioServerTransport();

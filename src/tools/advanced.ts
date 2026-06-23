@@ -728,9 +728,10 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
           "template",
           "activity",
           "player-hook",
+          "maker",
         ])
         .describe(
-          "Pattern to explain: iife-plugin | storage | settings | events | component | request | template | activity | player-hook"
+          "Pattern to explain: iife-plugin | storage | settings | events | component | request | template | activity | player-hook | maker"
         ),
     },
     async ({ pattern }) => {
@@ -878,6 +879,22 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
             "- For UI injection: inject on `start`, clean up on `destroy`",
             "- Use `Lampa.Listener.follow('torrent_file', fn)` for torrent player events",
             "- Avoid heavy computation in `timeupdate` — it fires very frequently",
+          ],
+        },
+        maker: {
+          title: "Lampa.Maker Modular Component Pattern (3.0)",
+          description:
+            "Lampa 3.0 replaced monolithic Interaction* classes with composable Maker modules. Each UI class (Main, Card, Category, Line, etc.) has toggleable behavior modules controlled via MaskHelper bitmasks.",
+          searchFor: "Lampa.Maker.make(",
+          searchIn: "src",
+          keyPoints: [
+            "- Create: `Lampa.Maker.make('Main', data, (m) => m.toggle(m.MASK.base, 'Callback'))`",
+            "- Get class: `Lampa.Maker.get('Main')` then `new classMain(data)`",
+            "- Configure modules: `Lampa.Maker.module('Main').only('Create')` or `.toggle(MASK, 'Name')`",
+            "- Override hooks: `Lampa.Maker.map('Main').Create.onCreateAndAppend = fn`",
+            "- List classes: `Lampa.Maker.list()` — Card, Main, Category, Line, Episode, Season, Person, etc.",
+            "- Deprecated: `Lampa.Card`, `Lampa.InteractionMain`, `InteractionCategory`, `InteractionLine`",
+            "- Use `maker_module_map` and `upgrade_migration_checker` tools for full reference",
           ],
         },
       };

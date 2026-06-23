@@ -8,7 +8,7 @@ It gives AI agents (Claude, Cursor, etc.) structured, read-only access to the La
 
 ## What it does
 
-The server exposes **41 tools** and **5 resources** across seven capability layers:
+The server exposes **51 tools** and **5 resources** across eight capability layers:
 
 | Layer | File | Tools | Purpose |
 |---|---|---|---|
@@ -19,6 +19,7 @@ The server exposes **41 tools** and **5 resources** across seven capability laye
 | Validation | `validation.ts` | 4 | Quality checks, find tests, resolve build commands, query docs |
 | Lampa Deep | `lampa_deep.ts` | 8 | Deep Lampa-specific analysis: providers, events, translations, lifecycle |
 | Advanced | `advanced.ts` | 8 | File reads, storage schema, event bus map, network map, pattern guide |
+| Lampa Modern | `lampa_modern.ts` | 10 | Maker modules, CUB API, WebSocket, components, settings, packaging |
 
 ---
 
@@ -78,6 +79,18 @@ The server exposes **41 tools** and **5 resources** across seven capability laye
 - `extract_template_html` — extract actual HTML markup, CSS classes, and data-binding placeholders from `src/templates/*.js`
 - `get_core_module` — browse and read `src/core/` modules; lists all available when called without a name
 - `explain_lampa_pattern` — pattern reference guide backed by live source examples: `iife-plugin`, `storage`, `settings`, `events`, `component`, `request`, `template`, `activity`, `player-hook`
+
+**Lampa Modern** (v3.0 architecture)
+- `maker_module_map` — map Maker classes (Card, Main, Category, Line, …), module/map files, and lifecycle hooks
+- `cub_api_catalog` — catalog all CUB cloud REST endpoints with method and source file
+- `socket_protocol_map` — WebSocket inbound/outbound methods, mirrors, and payload envelope
+- `activity_component_registry` — all `Component.add` registrations and Router routes
+- `lampa_settings_flags` — `window.lampa_settings` feature flags and platform overrides
+- `platform_packaging_guide` — gulp targets for web, webOS, Tizen, GitHub Pages, plugins, docs
+- `content_rows_api` — all `ContentRows.add` home-screen injection points
+- `favorite_category_schema` — favorite/bookmark category types and timeline marks
+- `manifest_mirrors_map` — cub_mirrors, soc_mirrors, cub_domain resolution logic
+- `upgrade_migration_checker` — detect deprecated 2.x APIs (Lampa.Card, InteractionMain, etc.) in a file
 
 ---
 
@@ -174,8 +187,8 @@ repo_overview → find_feature → module_dependency_map
 For deep plugin work, start with the single-call analysis tools:
 
 ```
-plugin_deep_dive → trace_event → get_storage_schema
-    → plan_feature_change → draft_patch → validate_plugin
+plugin_deep_dive → maker_module_map → trace_event → get_storage_schema
+    → plan_feature_change → draft_patch → validate_plugin → upgrade_migration_checker
 ```
 
 **System prompt for best results:**
@@ -198,7 +211,8 @@ src/
 │   ├── fs.ts              # File system helpers
 │   ├── search.ts          # ripgrep + Node fallback search
 │   ├── lampa.ts           # Lampa-specific patterns, feature map, risk patterns
-│   └── lampa_deep.ts      # Deep analysis utilities (events, lifecycle, providers)
+│   ├── lampa_deep.ts      # Deep analysis utilities (events, lifecycle, providers)
+│   └── lampa_modern.ts    # Lampa 3.0 architecture extractors (Maker, CUB, socket)
 ├── tools/
 │   ├── discovery.ts       # Phase 1 — repo navigation (6 tools)
 │   ├── analysis.ts        # Phase 2 — Lampa understanding (7 tools)
@@ -206,7 +220,8 @@ src/
 │   ├── editing.ts         # Phase 4 — assisted editing (4 tools)
 │   ├── validation.ts      # Phase 5 — quality checks (4 tools)
 │   ├── lampa_deep.ts      # Lampa-specific deep analysis (8 tools)
-│   └── advanced.ts        # File I/O, schema, pattern guide (8 tools)
+│   ├── advanced.ts        # File I/O, schema, pattern guide (8 tools)
+│   └── lampa_modern.ts    # Lampa 3.0 architecture tools (10 tools)
 └── resources/
     └── index.ts           # MCP resources (5 read-only stable context endpoints)
 ```

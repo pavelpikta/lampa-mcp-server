@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Config } from "../config.js";
 import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
+import { findMissingLangKeys } from "../utils/lampa_modern.js";
 
 export function registerValidationTools(server: McpServer, config: Config): void {
   // ── run_grep_checks ────────────────────────────────────────────────────────
@@ -58,6 +59,21 @@ export function registerValidationTools(server: McpServer, config: Config): void
           .slice(0, 15);
         results.push(
           `## Loose undefined checks (${hits.length})\n${hits.map((h) => `${h.file}:${h.line}  ${h.text}`).join("\n") || "None."}`
+        );
+      }
+
+      if (toRun.includes("missing_lang_keys")) {
+        const { missing, enKeyCount, langDir } = findMissingLangKeys(config.repoPath);
+        const sample = missing.slice(0, 30);
+        results.push(
+          `## Missing translation keys (${missing.length} of ${enKeyCount} en.js keys used in code)\n` +
+            `Reference: ${langDir}/en.js\n` +
+            (sample.length > 0
+              ? sample.map((k) => `- \`${k}\``).join("\n") +
+                (missing.length > 30
+                  ? `\n… and ${missing.length - 30} more. Use translation_coverage for full report.`
+                  : "")
+              : "All Lang.translate() keys found in en.js.")
         );
       }
 

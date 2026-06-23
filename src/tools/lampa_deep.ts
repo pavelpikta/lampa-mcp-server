@@ -306,14 +306,26 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
     async ({ event }) => {
       const rp = config.repoPath;
 
-      // Search for both single and double quote variants
-      const followSingle = searchCode(rp, `Lampa.Listener.follow('${event}'`, ["*.js"], false);
-      const followDouble = searchCode(rp, `Lampa.Listener.follow("${event}"`, ["*.js"], false);
-      const sendSingle = searchCode(rp, `Lampa.Listener.send('${event}'`, ["*.js"], false);
-      const sendDouble = searchCode(rp, `Lampa.Listener.send("${event}"`, ["*.js"], false);
+      const patterns = [
+        `Lampa.Listener.follow('${event}'`,
+        `Lampa.Listener.follow("${event}"`,
+        `Lampa.Listener.send('${event}'`,
+        `Lampa.Listener.send("${event}"`,
+        `.listener.follow('${event}'`,
+        `.listener.follow("${event}"`,
+        `.listener.send('${event}'`,
+        `.listener.send("${event}"`,
+      ];
 
-      const allFollows = [...followSingle, ...followDouble];
-      const allSends = [...sendSingle, ...sendDouble];
+      const allFollows: ReturnType<typeof searchCode> = [];
+      const allSends: ReturnType<typeof searchCode> = [];
+
+      for (const pat of patterns) {
+        const hits = searchCode(rp, pat, ["*.js"], false);
+        const isSend = pat.includes(".send(");
+        if (isSend) allSends.push(...hits);
+        else allFollows.push(...hits);
+      }
 
       // Deduplicate by file+line
       const dedup = (arr: typeof allFollows) => {
