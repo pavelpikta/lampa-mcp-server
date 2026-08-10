@@ -1,6 +1,5 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import path from "node:path";
 import type { Config } from "../config.js";
 import { readFileSafe, fileExists } from "../utils/fs.js";
 import {
@@ -17,17 +16,20 @@ import {
 
 export function registerLampaModernTools(server: McpServer, config: Config): void {
   // ── maker_module_map ───────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "maker_module_map",
-    "Map the Lampa 3.0 Maker architecture: all modular classes (Card, Main, Category, Line, etc.), their module/map file paths, and lifecycle hook names. Essential for 3.0 plugin and component development.",
     {
-      class_name: z
-        .string()
-        .optional()
-        .describe("Filter to one Maker class, e.g. 'Main', 'Card', 'Episode'. Omit to list all."),
+      description:
+        "Map the Lampa 3.0 Maker architecture: all modular classes (Card, Main, Category, Line, etc.), their module/map file paths, and lifecycle hook names. Essential for 3.0 plugin and component development.",
+      inputSchema: {
+        class_name: z
+          .string()
+          .optional()
+          .describe("Filter to one Maker class, e.g. 'Main', 'Card', 'Episode'. Omit to list all."),
+      },
     },
     async ({ class_name }) => {
-      const classes = extractMakerClasses(config.repoPath);
+      const classes = await extractMakerClasses(config.fs);
       const filtered = class_name
         ? classes.filter((c) => c.name.toLowerCase() === class_name.toLowerCase())
         : classes;
@@ -45,8 +47,9 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
         };
       }
 
-      const maskFile = path.join(config.repoPath, "src", "utils", "mask.js");
-      const maskPreview = readFileSafe(maskFile)?.split("\n").slice(0, 25).join("\n") ?? "";
+      const maskPreview =
+        (await readFileSafe(config.fs, "src/utils/mask.js"))?.split("\n").slice(0, 25).join("\n") ??
+        "";
 
       const rows = [
         `# Lampa Maker Module Map  (${filtered.length} class${filtered.length > 1 ? "es" : ""})`,
@@ -78,12 +81,15 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
   );
 
   // ── socket_protocol_map ────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "socket_protocol_map",
-    "Map the Lampa WebSocket sync protocol: inbound server methods, outbound client sends, mirror hosts, and connection URL pattern. Used for multi-device sync and remote control.",
-    {},
+    {
+      description:
+        "Map the Lampa WebSocket sync protocol: inbound server methods, outbound client sends, mirror hosts, and connection URL pattern. Used for multi-device sync and remote control.",
+      inputSchema: {},
+    },
     async () => {
-      const proto = extractSocketProtocol(config.repoPath);
+      const proto = await extractSocketProtocol(config.fs);
 
       const inboundBlock = proto.inbound
         .map((m) => `- \`${m.method}\` — ${m.description}`)
@@ -117,17 +123,20 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
   );
 
   // ── activity_component_registry ──────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "activity_component_registry",
-    "Registry of all navigation components: Lampa.Component.add registrations and Router routes. Maps component name strings to their source files — essential for Activity.push and back-navigation debugging.",
     {
-      name: z
-        .string()
-        .optional()
-        .describe("Filter by component or route name, e.g. 'full', 'iptv', 'online'."),
+      description:
+        "Registry of all navigation components: Lampa.Component.add registrations and Router routes. Maps component name strings to their source files — essential for Activity.push and back-navigation debugging.",
+      inputSchema: {
+        name: z
+          .string()
+          .optional()
+          .describe("Filter by component or route name, e.g. 'full', 'iptv', 'online'."),
+      },
     },
     async ({ name }) => {
-      let registry = extractComponentRegistry(config.repoPath);
+      let registry = await extractComponentRegistry(config.fs);
       if (name) {
         const lower = name.toLowerCase();
         registry = registry.filter((r) => r.name.toLowerCase().includes(lower));
@@ -173,17 +182,20 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
   );
 
   // ── lampa_settings_flags ─────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "lampa_settings_flags",
-    "Parse window.lampa_settings feature flags from src/app.js: socket, account, plugins, torrents, disable_features, IPTV mode side effects, and platform overrides.",
     {
-      filter: z
-        .string()
-        .optional()
-        .describe("Filter flags by keyword, e.g. 'socket', 'torrents', 'disable_features'."),
+      description:
+        "Parse window.lampa_settings feature flags from src/app.js: socket, account, plugins, torrents, disable_features, IPTV mode side effects, and platform overrides.",
+      inputSchema: {
+        filter: z
+          .string()
+          .optional()
+          .describe("Filter flags by keyword, e.g. 'socket', 'torrents', 'disable_features'."),
+      },
     },
     async ({ filter }) => {
-      let flags = extractLampaSettingsFlags(config.repoPath);
+      let flags = await extractLampaSettingsFlags(config.fs);
       if (filter) {
         const lower = filter.toLowerCase();
         flags = flags.filter((f) => f.key.toLowerCase().includes(lower));
@@ -221,13 +233,16 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
   );
 
   // ── platform_packaging_guide ─────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "platform_packaging_guide",
-    "Platform build and packaging targets from gulpfile.js: web dev, webOS, Tizen, GitHub Pages, plugins, and docs. Shows gulp task, output directory, and index shell for each target.",
-    {},
+    {
+      description:
+        "Platform build and packaging targets from gulpfile.js: web dev, webOS, Tizen, GitHub Pages, plugins, and docs. Shows gulp task, output directory, and index shell for each target.",
+      inputSchema: {},
+    },
     async () => {
-      const targets = extractPlatformTargets(config.repoPath);
-      const pkg = readFileSafe(path.join(config.repoPath, "package.json"));
+      const targets = await extractPlatformTargets(config.fs);
+      const pkg = await readFileSafe(config.fs, "package.json");
       let scripts = "";
       if (pkg) {
         const data = JSON.parse(pkg) as { scripts?: Record<string, string> };
@@ -260,12 +275,15 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
   );
 
   // ── content_rows_api ─────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "content_rows_api",
-    "List all ContentRows.add registrations — the extension point for injecting custom home-screen rows on main/category screens. Used by favorites, IPTV, and plugins.",
-    {},
+    {
+      description:
+        "List all ContentRows.add registrations — the extension point for injecting custom home-screen rows on main/category screens. Used by favorites, IPTV, and plugins.",
+      inputSchema: {},
+    },
     async () => {
-      const rows = extractContentRows(config.repoPath);
+      const rows = await extractContentRows(config.fs);
 
       if (rows.length === 0) {
         return {
@@ -307,12 +325,15 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
   );
 
   // ── favorite_category_schema ─────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "favorite_category_schema",
-    "Document favorite/bookmark category types from src/core/favorite.js: like, watch, book, history, look, viewed, scheduled, continued, thrown — and which are timeline marks.",
-    {},
+    {
+      description:
+        "Document favorite/bookmark category types from src/core/favorite.js: like, watch, book, history, look, viewed, scheduled, continued, thrown — and which are timeline marks.",
+      inputSchema: {},
+    },
     async () => {
-      const info = extractFavoriteCategories(config.repoPath);
+      const info = await extractFavoriteCategories(config.fs);
       if (!info) {
         return {
           content: [{ type: "text" as const, text: "src/core/favorite.js not found." }],
@@ -344,12 +365,15 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
   );
 
   // ── manifest_mirrors_map ─────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "manifest_mirrors_map",
-    "Document CUB mirror resolution: cub_mirrors, soc_mirrors, cub_domain selection, app version, and CDN URL logic from src/core/manifest.js.",
-    {},
+    {
+      description:
+        "Document CUB mirror resolution: cub_mirrors, soc_mirrors, cub_domain selection, app version, and CDN URL logic from src/core/manifest.js.",
+      inputSchema: {},
+    },
     async () => {
-      const mirrors = extractManifestMirrors(config.repoPath);
+      const mirrors = await extractManifestMirrors(config.fs);
 
       const out = [
         `# Lampa Manifest & Mirrors`,
@@ -372,21 +396,23 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
   );
 
   // ── upgrade_migration_checker ────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "upgrade_migration_checker",
-    "Check a file for deprecated Lampa 2.x APIs that must be migrated to Maker modules (Lampa.Card, InteractionMain, InteractionCategory, InteractionLine). Based on UPGRADE.md 2.4.7 → 3.0 guide.",
     {
-      file: z.string().describe("Repo-relative path to check, e.g. 'plugins/my_plugin/main.js'."),
+      description:
+        "Check a file for deprecated Lampa 2.x APIs that must be migrated to Maker modules (Lampa.Card, InteractionMain, InteractionCategory, InteractionLine). Based on UPGRADE.md 2.4.7 → 3.0 guide.",
+      inputSchema: {
+        file: z.string().describe("Repo-relative path to check, e.g. 'plugins/my_plugin/main.js'."),
+      },
     },
     async ({ file }) => {
-      const abs = path.join(config.repoPath, file);
-      if (!fileExists(abs)) {
+      if (!(await fileExists(config.fs, file))) {
         return {
           content: [{ type: "text" as const, text: `File not found: ${file}` }],
         };
       }
 
-      const hits = checkDeprecatedApis(config.repoPath, file);
+      const hits = await checkDeprecatedApis(config.fs, file);
 
       if (hits.length === 0) {
         return {
@@ -404,8 +430,7 @@ export function registerLampaModernTools(server: McpServer, config: Config): voi
           `- **Line ${h.line}** — \`${h.api}\`\n  \`${h.text}\`\n  → Replace with: \`${h.replacement}\``
       );
 
-      const upgradePath = path.join(config.repoPath, "UPGRADE.md");
-      const upgradeExists = fileExists(upgradePath);
+      const upgradeExists = await fileExists(config.fs, "UPGRADE.md");
 
       const out = [
         `# Migration Check: ${file}`,

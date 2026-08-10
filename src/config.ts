@@ -1,8 +1,11 @@
 import path from "node:path";
+import type { RepoFs } from "./fs/types.js";
+import { NodeRepoFs } from "./fs/node.js";
 
 export interface Config {
-  repoPath: string;
-  docsPath: string;
+  fs: RepoFs;
+  label: string; // display path e.g. "r2://lampa-source" or local path
+  docsPath: string; // relative "build/doc"
 }
 
 export function getConfig(): Config {
@@ -11,7 +14,8 @@ export function getConfig(): Config {
     : path.resolve(process.cwd(), "temp/lampa-source");
 
   return {
-    repoPath,
-    docsPath: path.join(repoPath, "build", "doc"),
+    fs: new NodeRepoFs(repoPath),
+    label: repoPath,
+    docsPath: "build/doc",
   };
 }

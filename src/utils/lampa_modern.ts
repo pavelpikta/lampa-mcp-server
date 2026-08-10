@@ -1,4 +1,5 @@
-import path from "node:path";
+import type { RepoFs } from "../fs/types.js";
+import { basename } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe, fileExists } from "./fs.js";
 
 // ── Maker architecture ─────────────────────────────────────────────────────
@@ -11,9 +12,9 @@ export interface MakerClassInfo {
   mapHooks: string[];
 }
 
-export function extractMakerClasses(repoPath: string): MakerClassInfo[] {
-  const makerFile = path.join(repoPath, "src", "interaction", "maker.js");
-  const content = readFileSafe(makerFile);
+export async function extractMakerClasses(fs: RepoFs): Promise<MakerClassInfo[]> {
+  const makerFile = "src/interaction/maker.js";
+  const content = await readFileSafe(fs, makerFile);
   if (!content) return [];
 
   const classNames: string[] = [];
@@ -33,7 +34,8 @@ export function extractMakerClasses(repoPath: string): MakerClassInfo[] {
 
   const unique = [...new Set(classNames)];
 
-  return unique.map((name) => {
+  const results: MakerClassInfo[] = [];
+  for (const name of unique) {
     const lower = name.toLowerCase();
 
     const candidates = [
@@ -99,15 +101,15 @@ export function extractMakerClasses(repoPath: string): MakerClassInfo[] {
       candidates.find(
         (c) =>
           c.classPath.toLowerCase().includes(`/${lower}/`) || c.classPath.includes(`/${lower}.`)
-      ) ?? candidates.find((c) => path.basename(c.classPath, ".js") === lower);
+      ) ?? candidates.find((c) => basename(c.classPath, ".js") === lower);
 
     const classRel = match ? `src/${match.classPath}` : `src/interaction/**/${lower}.js`;
     const moduleRel = match?.module ? `src/${match.module}` : null;
     const mapRel = match?.map ? `src/${match.map}` : null;
 
     let mapHooks: string[] = [];
-    if (mapRel && fileExists(path.join(repoPath, mapRel))) {
-      const mapContent = readFileSafe(path.join(repoPath, mapRel)) ?? "";
+    if (mapRel && (await fileExists(fs, mapRel))) {
+      const mapContent = (await readFileSafe(fs, mapRel)) ?? "";
       const hookPat = /(\w+)\s*:\s*\{/g;
       let hm: RegExpExecArray | null;
       while ((hm = hookPat.exec(mapContent)) !== null) {
@@ -130,8 +132,10 @@ export function extractMakerClasses(repoPath: string): MakerClassInfo[] {
       mapHooks = [...new Set(mapHooks)].sort();
     }
 
-    return { name, classPath: classRel, modulePath: moduleRel, mapPath: mapRel, mapHooks };
-  });
+    results.push({ name, classPath: classRel, modulePath: moduleRel, mapPath: mapRel, mapHooks });
+  }
+
+  return results;
 }
 
 // ── WebSocket protocol ───────────────────────────────────────────────────────
@@ -143,11 +147,11 @@ export interface SocketProtocol {
   urlPattern: string;
 }
 
-export function extractSocketProtocol(repoPath: string): SocketProtocol {
-  const socketFile = path.join(repoPath, "src", "core", "socket.js");
-  const manifestFile = path.join(repoPath, "src", "core", "manifest.js");
-  const content = readFileSafe(socketFile) ?? "";
-  const manifest = readFileSafe(manifestFile) ?? "";
+export async function extractSocketProtocol(fs: RepoFs): Promise<SocketProtocol> {
+  const socketFile = "src/core/socket.js";
+  const manifestFile = "src/core/manifest.js";
+  const content = (await readFileSafe(fs, socketFile)) ?? "";
+  const manifest = (await readFileSafe(fs, manifestFile)) ?? "";
 
   const inbound: SocketProtocol["inbound"] = [];
   const inboundMethods = [
@@ -207,15 +211,14 @@ export interface ComponentRegistration {
   type: "component" | "router";
 }
 
-export function extractComponentRegistry(repoPath: string): ComponentRegistration[] {
-  const jsFiles = listFilesRecursive(repoPath, [".js"]);
+export async function extractComponentRegistry(fs: RepoFs): Promise<ComponentRegistration[]> {
+  const jsFiles = await listFilesRecursive(fs, "", [".js"]);
   const results: ComponentRegistration[] = [];
   const seen = new Set<string>();
 
-  for (const file of jsFiles) {
-    const content = readFileSafe(file);
+  for (const rel of jsFiles) {
+    const content = await readFileSafe(fs, rel);
     if (!content) continue;
-    const rel = path.relative(repoPath, file);
     const lines = content.split("\n");
 
     for (let i = 0; i < lines.length; i++) {
@@ -253,9 +256,9 @@ export interface LampaSettingFlag {
   gates?: string;
 }
 
-export function extractLampaSettingsFlags(repoPath: string): LampaSettingFlag[] {
-  const appFile = path.join(repoPath, "src", "app.js");
-  const content = readFileSafe(appFile);
+export async function extractLampaSettingsFlags(fs: RepoFs): Promise<LampaSettingFlag[]> {
+  const appFile = "src/app.js";
+  const content = await readFileSafe(fs, appFile);
   if (!content) return [];
 
   const flags: LampaSettingFlag[] = [];
@@ -307,9 +310,9 @@ export interface PlatformTarget {
   description: string;
 }
 
-export function extractPlatformTargets(repoPath: string): PlatformTarget[] {
-  const gulpFile = path.join(repoPath, "gulpfile.js");
-  const content = readFileSafe(gulpFile) ?? "";
+export async function extractPlatformTargets(fs: RepoFs): Promise<PlatformTarget[]> {
+  const gulpFile = "gulpfile.js";
+  const content = (await readFileSafe(fs, gulpFile)) ?? "";
 
   const targets: PlatformTarget[] = [
     {
@@ -368,14 +371,13 @@ export interface ContentRowRegistration {
   line: number;
 }
 
-export function extractContentRows(repoPath: string): ContentRowRegistration[] {
-  const jsFiles = listFilesRecursive(repoPath, [".js"]);
+export async function extractContentRows(fs: RepoFs): Promise<ContentRowRegistration[]> {
+  const jsFiles = await listFilesRecursive(fs, "", [".js"]);
   const rows: ContentRowRegistration[] = [];
 
-  for (const file of jsFiles) {
-    const content = readFileSafe(file);
+  for (const rel of jsFiles) {
+    const content = await readFileSafe(fs, rel);
     if (!content || !content.includes("ContentRows.add")) continue;
-    const rel = path.relative(repoPath, file);
     const lines = content.split("\n");
 
     for (let i = 0; i < lines.length; i++) {
@@ -415,9 +417,9 @@ export interface FavoriteCategoryInfo {
   file: string;
 }
 
-export function extractFavoriteCategories(repoPath: string): FavoriteCategoryInfo | null {
-  const favFile = path.join(repoPath, "src", "core", "favorite.js");
-  const content = readFileSafe(favFile);
+export async function extractFavoriteCategories(fs: RepoFs): Promise<FavoriteCategoryInfo | null> {
+  const favFile = "src/core/favorite.js";
+  const content = await readFileSafe(fs, favFile);
   if (!content) return null;
 
   const catMatch = content.match(/category\s*=\s*\[([^\]]+)\]/);
@@ -438,9 +440,9 @@ export function extractFavoriteCategories(repoPath: string): FavoriteCategoryInf
 
 // ── Manifest mirrors ───────────────────────────────────────────────────────────
 
-export function extractManifestMirrors(repoPath: string): Record<string, string> {
-  const manifestFile = path.join(repoPath, "src", "core", "manifest.js");
-  const content = readFileSafe(manifestFile) ?? "";
+export async function extractManifestMirrors(fs: RepoFs): Promise<Record<string, string>> {
+  const manifestFile = "src/core/manifest.js";
+  const content = (await readFileSafe(fs, manifestFile)) ?? "";
 
   const extract = (prop: string): string => {
     const re = new RegExp(
@@ -496,12 +498,11 @@ export const DEPRECATED_APIS: Array<{ pattern: RegExp; name: string; replacement
   },
 ];
 
-export function checkDeprecatedApis(
-  repoPath: string,
+export async function checkDeprecatedApis(
+  fs: RepoFs,
   targetFile: string
-): Array<{ api: string; line: number; text: string; replacement: string }> {
-  const abs = path.join(repoPath, targetFile);
-  const content = readFileSafe(abs);
+): Promise<Array<{ api: string; line: number; text: string; replacement: string }>> {
+  const content = await readFileSafe(fs, targetFile);
   if (!content) return [];
 
   const lines = content.split("\n");
@@ -525,17 +526,18 @@ export function checkDeprecatedApis(
 
 // ── Lang keys used in code but missing from en.js ───────────────────────────
 
-export function findMissingLangKeys(repoPath: string): {
+export async function findMissingLangKeys(fs: RepoFs): Promise<{
   missing: string[];
   enKeyCount: number;
   langDir: string;
-} {
-  const srcLang = path.join(repoPath, "src", "lang", "en.js");
-  const pubLang = path.join(repoPath, "public", "lang", "en.js");
-  const enFile = fileExists(srcLang) ? srcLang : pubLang;
-  const langDir = fileExists(srcLang) ? "src/lang" : "public/lang";
+}> {
+  const srcLang = "src/lang/en.js";
+  const pubLang = "public/lang/en.js";
+  const hasSrc = await fileExists(fs, srcLang);
+  const enFile = hasSrc ? srcLang : pubLang;
+  const langDir = hasSrc ? "src/lang" : "public/lang";
 
-  const enContent = readFileSafe(enFile) ?? "";
+  const enContent = (await readFileSafe(fs, enFile)) ?? "";
   const enKeys = new Set<string>();
   const keyPat = /['"]([a-z][a-z0-9_]{1,60})['"]\s*:/g;
   let m: RegExpExecArray | null;
@@ -545,13 +547,13 @@ export function findMissingLangKeys(repoPath: string): {
 
   const usedKeys = new Set<string>();
   const usagePat = /Lang\.translate\(\s*['"]([a-z][a-z0-9_]+)['"]/g;
-  const srcFiles = listFilesRecursive(path.join(repoPath, "src"), [".js"]);
-  const pluginFiles = fileExists(path.join(repoPath, "plugins"))
-    ? listFilesRecursive(path.join(repoPath, "plugins"), [".js"])
+  const srcFiles = await listFilesRecursive(fs, "src", [".js"]);
+  const pluginFiles = (await fileExists(fs, "plugins"))
+    ? await listFilesRecursive(fs, "plugins", [".js"])
     : [];
 
   for (const file of [...srcFiles, ...pluginFiles]) {
-    const content = readFileSafe(file) ?? "";
+    const content = (await readFileSafe(fs, file)) ?? "";
     while ((m = usagePat.exec(content)) !== null) {
       usedKeys.add(m[1]);
     }

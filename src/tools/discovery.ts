@@ -1,23 +1,28 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import path from "node:path";
-import fs from "node:fs";
 import type { Config } from "../config.js";
+import { basename } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe, readSegment, fileExists } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
+import { resolveEditPath } from "../utils/lampa.js";
 
 export function registerDiscoveryTools(server: McpServer, config: Config): void {
   // ── repo_overview ──────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "repo_overview",
-    "Summarise the Lampa repository structure: top-level folders, likely entrypoints, build/doc scripts, and plugin list.",
-    {},
+    {
+      description:
+        "Summarise the Lampa repository structure: top-level folders, likely entrypoints, build/doc scripts, and plugin list.",
+      inputSchema: {},
+    },
     async () => {
-      const repoPath = config.repoPath;
-      if (!fileExists(repoPath)) {
+      if (!(await fileExists(config.fs))) {
         return {
           content: [
-            { type: "text", text: `Repository not found at ${repoPath}. Set LAMPA_REPO_PATH.` },
+            {
+              type: "text" as const,
+              text: `Repository not found at ${config.label}. Set LAMPA_REPO_PATH.`,
+            },
           ],
         };
       }
@@ -27,19 +32,15 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
         version?: string;
         scripts?: Record<string, string>;
       }
-      const pkg = readFileSafe(path.join(repoPath, "package.json"));
+      const pkg = await readFileSafe(config.fs, "package.json");
       const pkgData = pkg ? (JSON.parse(pkg) as PackageJson) : {};
 
-      const topLevel = fs
-        .readdirSync(repoPath, { withFileTypes: true })
-        .map((e) => `${e.isDirectory() ? "📁" : "📄"} ${e.name}`)
+      const topLevel = (await config.fs.listDir())
+        .map((e) => `${e.type === "dir" ? "📁" : "📄"} ${e.name}`)
         .join("\n");
 
-      const plugins = fileExists(path.join(repoPath, "plugins"))
-        ? fs
-            .readdirSync(path.join(repoPath, "plugins"), { withFileTypes: true })
-            .filter((e) => e.isDirectory())
-            .map((e) => e.name)
+      const plugins = (await fileExists(config.fs, "plugins"))
+        ? (await config.fs.listDir("plugins")).filter((e) => e.type === "dir").map((e) => e.name)
         : [];
 
       const scripts = pkgData.scripts
@@ -55,19 +56,18 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
         "public/index.html",
         "index/github/index.html",
       ]) {
-        if (fileExists(path.join(repoPath, candidate))) entrypoints.push(candidate);
+        if (await fileExists(config.fs, candidate)) entrypoints.push(candidate);
       }
 
-      const srcDirs = fileExists(path.join(repoPath, "src"))
-        ? fs
-            .readdirSync(path.join(repoPath, "src"), { withFileTypes: true })
-            .filter((e) => e.isDirectory())
+      const srcDirs = (await fileExists(config.fs, "src"))
+        ? (await config.fs.listDir("src"))
+            .filter((e) => e.type === "dir")
             .map((e) => `src/${e.name}`)
         : [];
 
       const summary = [
         `# Lampa Repository Overview`,
-        `**Path:** ${repoPath}`,
+        `**Path:** ${config.label}`,
         `**Name:** ${pkgData.name ?? "unknown"} v${pkgData.version ?? "?"}`,
         ``,
         `## Top-level`,
@@ -94,102 +94,189 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
         `- Specs: spec/ (Jest or similar)`,
       ].join("\n");
 
-      return { content: [{ type: "text", text: summary }] };
+      return { content: [{ type: "text" as const, text: summary }] };
     }
   );
 
   // ── list_modules ───────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "list_modules",
-    "List all JavaScript/TypeScript modules in a given subfolder of the Lampa repo.",
     {
-      subfolder: z
-        .string()
-        .optional()
-        .describe("Relative path inside repo, e.g. 'src/components'. Defaults to 'src'."),
+      description: "List all JavaScript/TypeScript modules in a given subfolder of the Lampa repo.",
+      inputSchema: {
+        subfolder: z
+          .string()
+          .optional()
+          .describe("Relative path inside repo, e.g. 'src/components'. Defaults to 'src'."),
+      },
     },
     async ({ subfolder }) => {
-      const base = path.join(config.repoPath, subfolder ?? "src");
-      if (!fileExists(base)) {
-        return { content: [{ type: "text", text: `Folder not found: ${subfolder}` }] };
+      const base = subfolder ?? "src";
+      if (!(await fileExists(config.fs, base))) {
+        return { content: [{ type: "text" as const, text: `Folder not found: ${subfolder}` }] };
       }
-      const files = listFilesRecursive(base, [".js", ".ts"]);
-      const lines = files.map((f) => path.relative(config.repoPath, f));
-      return { content: [{ type: "text", text: lines.join("\n") || "No modules found." }] };
+      const files = await listFilesRecursive(config.fs, base, [".js", ".ts"]);
+      return {
+        content: [{ type: "text" as const, text: files.join("\n") || "No modules found." }],
+      };
     }
   );
 
   // ── find_files ─────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "find_files",
-    "Find files in the repo by name pattern or extension.",
     {
-      pattern: z.string().describe("Substring or glob pattern to match against file names."),
-      ext: z.string().optional().describe("File extension filter, e.g. '.js', '.scss'."),
+      description: "Find files in the repo by name pattern or extension.",
+      inputSchema: {
+        pattern: z.string().describe("Substring or glob pattern to match against file names."),
+        ext: z.string().optional().describe("File extension filter, e.g. '.js', '.scss'."),
+      },
     },
     async ({ pattern, ext }) => {
       const exts = ext ? [ext] : [];
-      const all = listFilesRecursive(config.repoPath, exts);
+      const all = await listFilesRecursive(config.fs, "", exts);
       const lower = pattern.toLowerCase();
-      const matches = all
-        .filter((f) => path.basename(f).toLowerCase().includes(lower))
-        .map((f) => path.relative(config.repoPath, f));
+      const matches = all.filter((f) => basename(f).toLowerCase().includes(lower));
       return {
-        content: [{ type: "text", text: matches.join("\n") || `No files matching "${pattern}".` }],
+        content: [
+          { type: "text" as const, text: matches.join("\n") || `No files matching "${pattern}".` },
+        ],
       };
     }
   );
 
   // ── search_code ────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "search_code",
-    "Search the repo source code for a text string or regex pattern. Returns file paths, line numbers, and short previews.",
     {
-      query: z.string().describe("Text or regex to search for."),
-      globs: z
-        .array(z.string())
-        .optional()
-        .describe("File glob patterns to restrict search, e.g. ['*.js','*.ts']."),
-      regex: z.boolean().optional().describe("Treat query as a regex. Default false."),
+      description:
+        "Search the repo source code for a text string or regex pattern. Returns file paths, line numbers, and short previews.",
+      inputSchema: {
+        query: z.string().describe("Text or regex to search for."),
+        globs: z
+          .array(z.string())
+          .optional()
+          .describe("File glob patterns to restrict search, e.g. ['*.js','*.ts']."),
+        regex: z.boolean().optional().describe("Treat query as a regex. Default false."),
+        prefix: z
+          .string()
+          .optional()
+          .describe("Repo-relative folder to search within, e.g. 'src' or 'plugins'."),
+      },
     },
-    async ({ query, globs, regex }) => {
-      const matches = searchCode(config.repoPath, query, globs ?? [], regex ?? false);
+    async ({ query, globs, regex, prefix }) => {
+      const matches = await searchCode(config.fs, query, globs ?? [], regex ?? false, prefix);
       if (matches.length === 0) {
-        return { content: [{ type: "text", text: `No matches for "${query}".` }] };
+        return { content: [{ type: "text" as const, text: `No matches for "${query}".` }] };
       }
       const lines = matches.map((m) => `${m.file}:${m.line}  ${m.text}`);
       const header = `Found ${matches.length} match(es) for "${query}":\n`;
-      return { content: [{ type: "text", text: header + lines.join("\n") }] };
+      return { content: [{ type: "text" as const, text: header + lines.join("\n") }] };
     }
   );
 
   // ── read_file_segment ──────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "read_file_segment",
-    "Read a specific line range from a file in the repo.",
     {
-      file: z.string().describe("Repo-relative path, e.g. 'src/app.js'."),
-      start_line: z.number().describe("First line to read (1-based)."),
-      end_line: z.number().describe("Last line to read (inclusive)."),
+      description: "Read a specific line range from a file in the repo.",
+      inputSchema: {
+        file: z.string().describe("Repo-relative path, e.g. 'src/app.js'."),
+        start_line: z.number().describe("First line to read (1-based)."),
+        end_line: z.number().describe("Last line to read (inclusive)."),
+      },
     },
     async ({ file, start_line, end_line }) => {
-      const abs = path.join(config.repoPath, file);
-      if (!fileExists(abs)) {
-        return { content: [{ type: "text", text: `File not found: ${file}` }] };
+      if (!(await fileExists(config.fs, file))) {
+        return { content: [{ type: "text" as const, text: `File not found: ${file}` }] };
       }
-      const segment = readSegment(abs, start_line, end_line);
-      return { content: [{ type: "text", text: `\`\`\`\n${segment}\n\`\`\`` }] };
+      const segment = await readSegment(config.fs, file, start_line, end_line);
+      return { content: [{ type: "text" as const, text: `\`\`\`\n${segment}\n\`\`\`` }] };
     }
   );
 
   // ── list_scripts ───────────────────────────────────────────────────────────
-  server.tool("list_scripts", "List all NPM scripts defined in package.json.", {}, async () => {
-    const pkgPath = path.join(config.repoPath, "package.json");
-    const pkg = readFileSafe(pkgPath);
-    if (!pkg) return { content: [{ type: "text", text: "No package.json found." }] };
-    const data = JSON.parse(pkg) as { scripts?: Record<string, string> };
-    const scripts: Record<string, string> = data.scripts ?? {};
-    const lines = Object.entries(scripts).map(([k, v]) => `${k.padEnd(20)} → ${v}`);
-    return { content: [{ type: "text", text: lines.join("\n") || "No scripts defined." }] };
-  });
+  server.registerTool(
+    "list_scripts",
+    {
+      description: "List all NPM scripts defined in package.json.",
+      inputSchema: {},
+    },
+    async () => {
+      const pkg = await readFileSafe(config.fs, "package.json");
+      if (!pkg) return { content: [{ type: "text" as const, text: "No package.json found." }] };
+      const data = JSON.parse(pkg) as { scripts?: Record<string, string> };
+      const scripts: Record<string, string> = data.scripts ?? {};
+      const lines = Object.entries(scripts).map(([k, v]) => `${k.padEnd(20)} → ${v}`);
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") || "No scripts defined." }],
+      };
+    }
+  );
+
+  // ── snapshot_info ──────────────────────────────────────────────────────────
+  server.registerTool(
+    "snapshot_info",
+    {
+      description:
+        "Show which Lampa source snapshot this MCP is serving (commit, generatedAt, file counts). Call this first on remote Workers.",
+      inputSchema: {},
+    },
+    async () => {
+      const meta = (await config.fs.getSnapshotMeta?.()) ?? null;
+      const body = {
+        label: config.label,
+        commit: meta?.commit ?? null,
+        generatedAt: meta?.generatedAt ?? null,
+        fileCount: meta?.fileCount ?? null,
+        totalBytes: meta?.totalBytes ?? null,
+        bundled: meta?.bundled ?? null,
+      };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(body, null, 2) }],
+      };
+    }
+  );
+
+  // ── resolve_edit_path ──────────────────────────────────────────────────────
+  server.registerTool(
+    "resolve_edit_path",
+    {
+      description:
+        "Return the authoritative edit path for a Lampa change kind (lang, sass, template, component, plugin, core, interaction, settings). Prevents editing public/build copies.",
+      inputSchema: {
+        kind: z
+          .enum([
+            "lang",
+            "sass",
+            "template",
+            "component",
+            "plugin",
+            "core",
+            "interaction",
+            "settings",
+          ])
+          .describe("What kind of source you intend to change."),
+        name: z
+          .string()
+          .optional()
+          .describe("Optional name, e.g. plugin id 'tracks' or lang code 'en'."),
+      },
+    },
+    async ({ kind, name }) => {
+      const result = resolveEditPath(kind, name);
+      const text = [
+        `# Edit path: ${kind}${name ? ` (${name})` : ""}`,
+        ``,
+        `## Authoritative`,
+        ...result.authoritative.map((p) => `- ${p}`),
+        ``,
+        `## Avoid`,
+        ...result.avoid.map((p) => `- ${p}`),
+        ``,
+        result.notes,
+      ].join("\n");
+      return { content: [{ type: "text" as const, text }] };
+    }
+  );
 }

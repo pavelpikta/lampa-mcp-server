@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "lampa-mcp-server",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "r2_buckets": [
+    {
+      "binding": "LAMPA_SOURCE",
+      "bucket_name": "lampa-mcp-source"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "00000000000000000000000000000000",
+      "preview_id": "00000000000000000000000000000000"
+    }
+  ],
+  // Optional allowlist: "ALLOWED_GITHUB_USERS": "alice,bob"
+  "vars": {
+    "SNAPSHOT_PREFIX": "lampa/"
+  }
+}

@@ -1,7 +1,7 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import path from "node:path";
 import type { Config } from "../config.js";
+import type { RepoFs } from "../fs/types.js";
 import { readFileSafe, fileExists } from "../utils/fs.js";
 import {
   extractLampaCubApi,
@@ -10,7 +10,7 @@ import {
   type LampaCubEndpoint,
 } from "../utils/cub.js";
 
-function formatEndpointDetail(ep: LampaCubEndpoint, repoPath: string): string {
+async function formatEndpointDetail(ep: LampaCubEndpoint, fs: RepoFs): Promise<string> {
   const lines = [
     `# ${ep.path}`,
     ``,
@@ -30,11 +30,9 @@ function formatEndpointDetail(ep: LampaCubEndpoint, repoPath: string): string {
     ...ep.files.map((f) => `- \`${f.file}:${f.line}\`  \`${f.context}\``),
   ].filter(Boolean);
 
-  // Show source preview from first file
   const first = ep.files[0];
   if (first && first.line > 0) {
-    const abs = path.join(repoPath, first.file);
-    const content = readFileSafe(abs);
+    const content = await readFileSafe(fs, first.file);
     if (content) {
       const fileLines = content.split("\n");
       const start = Math.max(0, first.line - 4);
@@ -59,45 +57,60 @@ function formatEndpointDetail(ep: LampaCubEndpoint, repoPath: string): string {
   return lines.join("\n");
 }
 
+function indexText(indexed: unknown): string {
+  return typeof indexed === "string" ? indexed : JSON.stringify(indexed, null, 2);
+}
+
 export function registerCubTools(server: McpServer, config: Config): void {
   // ── cub_api_catalog ────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "cub_api_catalog",
-    "Complete catalog of CUB cloud API endpoints used by Lampa source: account, bookmarks, timeline, AI, collections, TMDB proxy, IPTV, metrics, and WebSocket sync. Extracted from lampa-source only.",
     {
-      category: z
-        .enum([
-          "all",
-          "account",
-          "bookmarks",
-          "timeline",
-          "notifications",
-          "notice",
-          "person",
-          "ai",
-          "discuss",
-          "reactions",
-          "collections",
-          "content",
-          "extensions",
-          "storage",
-          "services",
-          "media",
-          "tmdb_proxy",
-          "advert",
-        ])
-        .optional()
-        .describe("Filter by API category. Default: all."),
-      search: z.string().optional().describe("Filter by path substring."),
+      description:
+        "Complete catalog of CUB cloud API endpoints used by Lampa source: account, bookmarks, timeline, AI, collections, TMDB proxy, IPTV, metrics, and WebSocket sync. Extracted from lampa-source only.",
+      inputSchema: {
+        category: z
+          .enum([
+            "all",
+            "account",
+            "bookmarks",
+            "timeline",
+            "notifications",
+            "notice",
+            "person",
+            "ai",
+            "discuss",
+            "reactions",
+            "collections",
+            "content",
+            "extensions",
+            "storage",
+            "services",
+            "media",
+            "tmdb_proxy",
+            "advert",
+          ])
+          .optional()
+          .describe("Filter by API category. Default: all."),
+        search: z.string().optional().describe("Filter by path substring."),
+      },
     },
     async ({ category = "all", search }) => {
-      if (!fileExists(config.repoPath)) {
+      if (!(await fileExists(config.fs))) {
         return {
-          content: [{ type: "text" as const, text: `Lampa repo not found: ${config.repoPath}` }],
+          content: [{ type: "text" as const, text: `Lampa repo not found: ${config.label}` }],
         };
       }
 
-      let endpoints = extractLampaCubApi(config.repoPath);
+      const indexed = await config.fs.readIndex?.("cub-api");
+      let endpoints: LampaCubEndpoint[];
+      if (Array.isArray(indexed)) {
+        endpoints = indexed as LampaCubEndpoint[];
+      } else if (indexed != null && category === "all" && !search) {
+        return { content: [{ type: "text" as const, text: indexText(indexed) }] };
+      } else {
+        endpoints = await extractLampaCubApi(config.fs);
+      }
 
       if (category !== "all") {
         endpoints = endpoints.filter((e) => e.category === category);
@@ -128,7 +141,7 @@ export function registerCubTools(server: McpServer, config: Config): void {
       const out = [
         `# Lampa CUB API Catalog  (${endpoints.length} endpoints)`,
         ``,
-        `Extracted from: \`${config.repoPath}\``,
+        `Extracted from: \`${config.label}\``,
         `**REST base:** \`{protocol}://{Manifest.cub_domain}/api/\``,
         `**TMDB proxy:** \`tmdb.{cub_domain}/\` (catalog, not under /api/)`,
         `**Auth:** \`token\` + \`profile\` headers via Account.Permit`,
@@ -144,20 +157,23 @@ export function registerCubTools(server: McpServer, config: Config): void {
   );
 
   // ── cub_endpoint_detail ──────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "cub_endpoint_detail",
-    "Detailed view of a single CUB API endpoint as used in Lampa: auth, feature gates, source file locations, and code context.",
     {
-      path: z
-        .string()
-        .describe(
-          "Endpoint path, e.g. 'bookmarks/dump', 'timeline/changelog', 'ai/search/{query}', 'device/add'."
-        ),
+      description:
+        "Detailed view of a single CUB API endpoint as used in Lampa: auth, feature gates, source file locations, and code context.",
+      inputSchema: {
+        path: z
+          .string()
+          .describe(
+            "Endpoint path, e.g. 'bookmarks/dump', 'timeline/changelog', 'ai/search/{query}', 'device/add'."
+          ),
+      },
     },
     async ({ path: endpointPath }) => {
-      const ep = findLampaCubEndpoint(config.repoPath, endpointPath);
+      const ep = await findLampaCubEndpoint(config.fs, endpointPath);
       if (!ep) {
-        const all = extractLampaCubApi(config.repoPath);
+        const all = await extractLampaCubApi(config.fs);
         const sample = all
           .slice(0, 15)
           .map((e) => e.path)
@@ -172,20 +188,23 @@ export function registerCubTools(server: McpServer, config: Config): void {
         };
       }
       return {
-        content: [{ type: "text" as const, text: formatEndpointDetail(ep, config.repoPath) }],
+        content: [{ type: "text" as const, text: await formatEndpointDetail(ep, config.fs) }],
       };
     }
   );
 
   // ── cub_auth_guide ───────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "cub_auth_guide",
-    "CUB authentication as implemented in Lampa: device/add flow, token/profile headers, Account.Permit gating, Premium checks, and mirror resolution.",
     {
-      topic: z
-        .enum(["overview", "device", "headers", "permit", "premium", "mirrors"])
-        .optional()
-        .describe("Focus area. Default: overview."),
+      description:
+        "CUB authentication as implemented in Lampa: device/add flow, token/profile headers, Account.Permit gating, Premium checks, and mirror resolution.",
+      inputSchema: {
+        topic: z
+          .enum(["overview", "device", "headers", "permit", "premium", "mirrors"])
+          .optional()
+          .describe("Focus area. Default: overview."),
+      },
     },
     async ({ topic = "overview" }) => {
       const m = CUB_DATA_MODELS;
@@ -266,14 +285,17 @@ export function registerCubTools(server: McpServer, config: Config): void {
   );
 
   // ── cub_data_models ──────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "cub_data_models",
-    "CUB data schemas as used in Lampa: bookmark types, timeline storage, favorite categories, and sync payload shapes.",
     {
-      model: z
-        .enum(["all", "bookmarks", "timeline", "favorites", "account", "sync"])
-        .optional()
-        .describe("Which model to show. Default: all."),
+      description:
+        "CUB data schemas as used in Lampa: bookmark types, timeline storage, favorite categories, and sync payload shapes.",
+      inputSchema: {
+        model: z
+          .enum(["all", "bookmarks", "timeline", "favorites", "account", "sync"])
+          .optional()
+          .describe("Which model to show. Default: all."),
+      },
     },
     async ({ model = "all" }) => {
       const m = CUB_DATA_MODELS;
@@ -346,10 +368,13 @@ export function registerCubTools(server: McpServer, config: Config): void {
   );
 
   // ── cub_sync_guide ───────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "cub_sync_guide",
-    "How Lampa syncs CUB cloud data: bookmark dump/changelog, timeline dump/changelog, WebSocket push, and Premium storage workers. Maps REST endpoints to sync code paths.",
-    {},
+    {
+      description:
+        "How Lampa syncs CUB cloud data: bookmark dump/changelog, timeline dump/changelog, WebSocket push, and Premium storage workers. Maps REST endpoints to sync code paths.",
+      inputSchema: {},
+    },
     async () => {
       const out = [
         `# CUB Sync Architecture in Lampa`,
@@ -391,11 +416,14 @@ export function registerCubTools(server: McpServer, config: Config): void {
   );
 
   // ── cub_timeline_hash_guide ──────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "cub_timeline_hash_guide",
-    "Timeline hash algorithm in Lampa: Utils.hash() and episodes_parser hash_string — keys for watch progress sync.",
     {
-      example: z.enum(["movie", "tv"]).optional().describe("Show worked example."),
+      description:
+        "Timeline hash algorithm in Lampa: Utils.hash() and episodes_parser hash_string — keys for watch progress sync.",
+      inputSchema: {
+        example: z.enum(["movie", "tv"]).optional().describe("Show worked example."),
+      },
     },
     async ({ example }) => {
       const out = [

@@ -1,29 +1,61 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import path from "node:path";
-import fs from "node:fs";
 import type { Config } from "../config.js";
+import { basename, joinRepo } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
+import { formatTemplates } from "../utils/lampa_deep.js";
+
+function indexText(indexed: unknown): string {
+  if (typeof indexed === "string") return indexed;
+  if (indexed && typeof indexed === "object" && "hits" in indexed) {
+    const hits = (
+      indexed as {
+        hits: {
+          file: string;
+          key?: string;
+          event?: string;
+          op?: string;
+          bus?: string;
+          text?: string;
+          line?: number;
+        }[];
+        note?: string;
+      }
+    ).hits;
+    const note = (indexed as { note?: string }).note;
+    const lines = hits.slice(0, 300).map((h) => {
+      const label = h.key ?? h.event ?? h.text ?? "";
+      const meta = [h.op, h.bus].filter(Boolean).join("/");
+      return `${h.file}${h.line ? `:${h.line}` : ""}${meta ? ` [${meta}]` : ""}  ${label}`;
+    });
+    return [note ? `# ${note}` : null, ...lines].filter(Boolean).join("\n");
+  }
+  return JSON.stringify(indexed, null, 2);
+}
+
+function isR2Backend(config: Config): boolean {
+  return config.label.startsWith("r2://");
+}
 
 export function registerAdvancedTools(server: McpServer, config: Config): void {
   // ── read_file ──────────────────────────────────────────────────────────────
-  // The existing read_file_segment requires knowing line numbers upfront.
-  // This tool reads an entire file, which is the most common need.
-  server.tool(
+  server.registerTool(
     "read_file",
-    "Read the complete contents of any file in the Lampa repo. Files larger than max_lines are truncated — use read_file_segment to read specific sections of large files.",
     {
-      file: z
-        .string()
-        .describe(
-          "Repo-relative path, e.g. 'plugins/iptv/iptv.js', 'src/core/lang.js', 'gulpfile.js'."
-        ),
-      max_lines: z.number().optional().describe("Maximum lines to return. Default: 300."),
+      description:
+        "Read the complete contents of any file in the Lampa repo. Files larger than max_lines are truncated — use read_file_segment to read specific sections of large files.",
+      inputSchema: {
+        file: z
+          .string()
+          .describe(
+            "Repo-relative path, e.g. 'plugins/iptv/iptv.js', 'src/core/lang.js', 'gulpfile.js'."
+          ),
+        max_lines: z.number().optional().describe("Maximum lines to return. Default: 300."),
+      },
     },
     async ({ file, max_lines = 300 }) => {
-      const abs = path.join(config.repoPath, file);
-      if (!fileExists(abs)) {
+      if (!(await fileExists(config.fs, file))) {
         return {
           content: [
             {
@@ -34,13 +66,15 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
         };
       }
 
-      const content = readFileSafe(abs) ?? "";
+      const content = (await readFileSafe(config.fs, file)) ?? "";
       const lines = content.split("\n");
       const total = lines.length;
       const truncated = total > max_lines;
       const shown = truncated ? lines.slice(0, max_lines).join("\n") : content;
 
-      const ext = path.extname(file).slice(1) || "text";
+      const base = basename(file);
+      const dot = base.lastIndexOf(".");
+      const ext = dot >= 0 ? base.slice(dot + 1) : "text";
       const lang = ext === "ts" ? "typescript" : ext === "js" ? "javascript" : ext;
 
       return {
@@ -65,38 +99,58 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
   );
 
   // ── get_storage_schema ─────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "get_storage_schema",
-    "Extract all Lampa.Storage keys used across the codebase. Builds a complete map of the user-persistence model: key names, default values, which files read and write each key.",
     {
-      scope: z
-        .enum(["all", "plugins", "src"])
-        .optional()
-        .describe("Limit the search scope. Default: 'all'."),
-      key: z.string().optional().describe("Filter to a single storage key, e.g. 'filmix_token'."),
+      description:
+        "Extract all Lampa.Storage keys used across the codebase. Builds a complete map of the user-persistence model: key names, default values, which files read and write each key.",
+      inputSchema: {
+        scope: z
+          .enum(["all", "plugins", "src"])
+          .optional()
+          .describe("Limit the search scope. Default: 'all'."),
+        key: z.string().optional().describe("Filter to a single storage key, e.g. 'filmix_token'."),
+      },
     },
     async ({ scope = "all", key }) => {
-      const searchRoot =
-        scope === "plugins"
-          ? path.join(config.repoPath, "plugins")
-          : scope === "src"
-            ? path.join(config.repoPath, "src")
-            : config.repoPath;
+      const indexed = await config.fs.readIndex?.("storage-schema");
+      if (indexed != null && scope === "all" && !key) {
+        return { content: [{ type: "text" as const, text: indexText(indexed) }] };
+      }
 
-      const jsFiles = listFilesRecursive(searchRoot, [".js"]);
+      if (indexed == null && isR2Backend(config) && scope === "all" && !key) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                `# Storage schema index missing`,
+                ``,
+                `Full-tree Storage scans are disabled on R2 backends without a prebuilt index.`,
+                ``,
+                `Narrow the query:`,
+                `- Pass \`scope: "src"\` or \`scope: "plugins"\``,
+                `- Or pass \`key: "<storage_key>"\` to look up one key`,
+                ``,
+                `Or rebuild indexes (snapshot upload) so \`indexes/storage-schema\` is available.`,
+              ].join("\n"),
+            },
+          ],
+        };
+      }
 
-      // key -> { defaults, readers, writers }
+      const searchRoot = scope === "plugins" ? "plugins" : scope === "src" ? "src" : "";
+      const jsFiles = await listFilesRecursive(config.fs, searchRoot, [".js"]);
+
       const schema: Record<
         string,
         { defaults: Set<string>; readers: string[]; writers: string[] }
       > = {};
 
       for (const file of jsFiles) {
-        const content = readFileSafe(file);
+        const content = await readFileSafe(config.fs, file);
         if (!content) continue;
-        const relFile = path.relative(config.repoPath, file);
 
-        // Lampa.Storage.get('key', default)
         const getPat = /Lampa\.Storage\.get\(['"]([^'"]{1,60})['"](?:\s*,\s*([^)]{0,60}))?\)/g;
         let m: RegExpExecArray | null;
         while ((m = getPat.exec(content)) !== null) {
@@ -105,16 +159,15 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
           if (key && k !== key) continue;
           if (!schema[k]) schema[k] = { defaults: new Set(), readers: [], writers: [] };
           if (def) schema[k].defaults.add(def);
-          if (!schema[k].readers.includes(relFile)) schema[k].readers.push(relFile);
+          if (!schema[k].readers.includes(file)) schema[k].readers.push(file);
         }
 
-        // Lampa.Storage.set('key', ...)
         const setPat = /Lampa\.Storage\.set\(['"]([^'"]{1,60})['"]/g;
         while ((m = setPat.exec(content)) !== null) {
           const k = m[1];
           if (key && k !== key) continue;
           if (!schema[k]) schema[k] = { defaults: new Set(), readers: [], writers: [] };
-          if (!schema[k].writers.includes(relFile)) schema[k].writers.push(relFile);
+          if (!schema[k].writers.includes(file)) schema[k].writers.push(file);
         }
       }
 
@@ -144,7 +197,6 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
         }),
       ];
 
-      // For single key lookup, show full detail
       if (key && entries.length === 1) {
         const [k, { defaults, readers, writers }] = entries[0];
         rows.push(
@@ -163,35 +215,57 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
   );
 
   // ── list_all_events ────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "list_all_events",
-    "Build a complete map of the Lampa.Listener event bus. Lists every event name, how many files listen to it, and how many files emit it — across the entire codebase.",
     {
-      scope: z
-        .enum(["all", "plugins", "src"])
-        .optional()
-        .describe("Scope to search. Default: 'all'."),
-      detail: z
-        .boolean()
-        .optional()
-        .describe("Include per-file details for each event. Default: false."),
+      description:
+        "Build a complete map of the Lampa.Listener event bus. Lists every event name, how many files listen to it, and how many files emit it — across the entire codebase.",
+      inputSchema: {
+        scope: z
+          .enum(["all", "plugins", "src"])
+          .optional()
+          .describe("Scope to search. Default: 'all'."),
+        detail: z
+          .boolean()
+          .optional()
+          .describe("Include per-file details for each event. Default: false."),
+      },
     },
     async ({ scope = "all", detail = false }) => {
-      const searchRoot =
-        scope === "plugins"
-          ? path.join(config.repoPath, "plugins")
-          : scope === "src"
-            ? path.join(config.repoPath, "src")
-            : config.repoPath;
+      const indexed = await config.fs.readIndex?.("events");
+      if (indexed != null && scope === "all" && !detail) {
+        return { content: [{ type: "text" as const, text: indexText(indexed) }] };
+      }
 
-      const jsFiles = listFilesRecursive(searchRoot, [".js"]);
+      if (indexed == null && isR2Backend(config) && scope === "all") {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                `# Events index missing`,
+                ``,
+                `Full-tree event scans are disabled on R2 backends without a prebuilt index.`,
+                ``,
+                `Narrow the query:`,
+                `- Pass \`scope: "src"\` or \`scope: "plugins"\``,
+                ``,
+                `Or rebuild indexes (snapshot upload) so \`indexes/events\` is available.`,
+                `For a single event, prefer \`trace_event\`.`,
+              ].join("\n"),
+            },
+          ],
+        };
+      }
+
+      const searchRoot = scope === "plugins" ? "plugins" : scope === "src" ? "src" : "";
+      const jsFiles = await listFilesRecursive(config.fs, searchRoot, [".js"]);
 
       const events: Record<string, { listeners: string[]; emitters: string[] }> = {};
 
       for (const file of jsFiles) {
-        const content = readFileSafe(file);
+        const content = await readFileSafe(config.fs, file);
         if (!content) continue;
-        const rel = path.relative(config.repoPath, file);
 
         const followPat = /Lampa\.Listener\.follow\(['"]([\w:.-]+)['"]/g;
         const sendPat = /Lampa\.Listener\.send\(['"]([\w:.-]+)['"]/g;
@@ -200,12 +274,12 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
         while ((m = followPat.exec(content)) !== null) {
           const evt = m[1];
           if (!events[evt]) events[evt] = { listeners: [], emitters: [] };
-          if (!events[evt].listeners.includes(rel)) events[evt].listeners.push(rel);
+          if (!events[evt].listeners.includes(file)) events[evt].listeners.push(file);
         }
         while ((m = sendPat.exec(content)) !== null) {
           const evt = m[1];
           if (!events[evt]) events[evt] = { listeners: [], emitters: [] };
-          if (!events[evt].emitters.includes(rel)) events[evt].emitters.push(rel);
+          if (!events[evt].emitters.includes(file)) events[evt].emitters.push(file);
         }
       }
 
@@ -248,23 +322,24 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
   );
 
   // ── get_network_map ────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "get_network_map",
-    "Extract all hardcoded URLs, API base URLs, and proxy patterns from the Lampa source. Reveals every external service the app communicates with.",
     {
-      scope: z
-        .string()
-        .optional()
-        .describe(
-          "Repo-relative subfolder to search, e.g. 'plugins/online', 'plugins/iptv'. Defaults to 'plugins'."
-        ),
+      description:
+        "Extract all hardcoded URLs, API base URLs, and proxy patterns from the Lampa source. Reveals every external service the app communicates with.",
+      inputSchema: {
+        scope: z
+          .string()
+          .optional()
+          .describe(
+            "Repo-relative subfolder to search, e.g. 'plugins/online', 'plugins/iptv'. Defaults to 'plugins'."
+          ),
+      },
     },
     async ({ scope }) => {
-      const searchRoot = scope
-        ? path.join(config.repoPath, scope)
-        : path.join(config.repoPath, "plugins");
+      const searchRoot = scope ?? "plugins";
 
-      if (!fileExists(searchRoot)) {
+      if (!(await fileExists(config.fs, searchRoot))) {
         return {
           content: [
             {
@@ -275,19 +350,16 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
         };
       }
 
-      const jsFiles = listFilesRecursive(searchRoot, [".js"]);
+      const jsFiles = await listFilesRecursive(config.fs, searchRoot, [".js"]);
 
-      // file -> { urls, proxies, embedVars }
       const map: Record<string, { urls: string[]; proxies: string[]; embedVars: string[] }> = {};
 
       for (const file of jsFiles) {
-        const content = readFileSafe(file);
+        const content = await readFileSafe(config.fs, file);
         if (!content) continue;
-        const rel = path.relative(config.repoPath, file);
 
         const entry = { urls: [] as string[], proxies: [] as string[], embedVars: [] as string[] };
 
-        // Hardcoded https?:// URLs in string literals
         const urlPat = /['"`](https?:\/\/[^'"`\s\\]{4,120})['"`]/g;
         let m: RegExpExecArray | null;
         while ((m = urlPat.exec(content)) !== null) {
@@ -295,20 +367,18 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
           if (!entry.urls.includes(url)) entry.urls.push(url);
         }
 
-        // Proxy calls: component.proxy('name')
         const proxyPat = /\.proxy\(['"]([^'"]+)['"]\)/g;
         while ((m = proxyPat.exec(content)) !== null) {
           if (!entry.proxies.includes(m[1])) entry.proxies.push(m[1]);
         }
 
-        // Embed variable: let embed = '...'  (base URL variable)
         const embedPat = /(?:let|var|const)\s+embed\s*=\s*['"`]([^'"`]+)['"`]/g;
         while ((m = embedPat.exec(content)) !== null) {
           if (!entry.embedVars.includes(m[1])) entry.embedVars.push(m[1]);
         }
 
         if (entry.urls.length > 0 || entry.proxies.length > 0 || entry.embedVars.length > 0) {
-          map[rel] = entry;
+          map[file] = entry;
         }
       }
 
@@ -349,65 +419,60 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
   );
 
   // ── validate_plugin ────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "validate_plugin",
-    "Validate a Lampa plugin against established conventions: IIFE wrapping, strict mode, appready bootstrap, no localhost URLs, proper event cleanup, and more. Returns a scored report with fix guidance.",
     {
-      plugin: z
-        .string()
-        .describe(
-          "Plugin folder name (e.g. 'iptv', 'online') or repo-relative path to a plugin JS file."
-        ),
+      description:
+        "Validate a Lampa plugin against established conventions: IIFE wrapping, strict mode, appready bootstrap, no localhost URLs, proper event cleanup, and more. Returns a scored report with fix guidance.",
+      inputSchema: {
+        plugin: z
+          .string()
+          .describe(
+            "Plugin folder name (e.g. 'iptv', 'online') or repo-relative path to a plugin JS file."
+          ),
+      },
     },
     async ({ plugin }) => {
-      const rp = config.repoPath;
-
-      // Resolve entry point
       let targetFile: string | null = null;
 
-      const asPath = path.join(rp, plugin);
-      if (fileExists(asPath) && asPath.endsWith(".js")) {
-        targetFile = asPath;
+      if ((await fileExists(config.fs, plugin)) && plugin.endsWith(".js")) {
+        targetFile = plugin;
       } else {
-        const pluginDir = path.join(rp, "plugins", plugin);
-        if (fileExists(pluginDir)) {
-          const candidates = [
-            path.join(pluginDir, "main.js"),
-            path.join(pluginDir, `${plugin}.js`),
-          ];
+        const pluginDir = joinRepo("plugins", plugin);
+        if (await fileExists(config.fs, pluginDir)) {
+          const candidates = [joinRepo(pluginDir, "main.js"), joinRepo(pluginDir, `${plugin}.js`)];
           for (const c of candidates) {
-            if (fileExists(c)) {
+            if (await fileExists(config.fs, c)) {
               targetFile = c;
               break;
             }
           }
           if (!targetFile) {
-            const jsFiles = listFilesRecursive(pluginDir, [".js"]);
+            const jsFiles = await listFilesRecursive(config.fs, pluginDir, [".js"]);
             targetFile = jsFiles[0] ?? null;
           }
         }
       }
 
       if (!targetFile) {
+        const available = (await fileExists(config.fs, "plugins"))
+          ? (await config.fs.listDir("plugins"))
+              .filter((e) => e.type === "dir")
+              .map((e) => e.name)
+              .join(", ")
+          : "plugins/ not found";
         return {
           content: [
             {
               type: "text" as const,
-              text: [
-                `Plugin "${plugin}" not found.`,
-                `Available: ${fs
-                  .readdirSync(path.join(rp, "plugins"), { withFileTypes: true })
-                  .filter((e) => e.isDirectory())
-                  .map((e) => e.name)
-                  .join(", ")}`,
-              ].join("\n"),
+              text: [`Plugin "${plugin}" not found.`, `Available: ${available}`].join("\n"),
             },
           ],
         };
       }
 
-      const content = readFileSafe(targetFile) ?? "";
-      const rel = path.relative(rp, targetFile);
+      const content = (await readFileSafe(config.fs, targetFile)) ?? "";
+      const rel = targetFile;
       const lines = content.split("\n");
 
       const checks: Array<{
@@ -473,13 +538,12 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
         {
           name: "Storage keys use plugin prefix",
           pass: (() => {
-            // Check if any Storage.get key doesn't start with a plausible prefix
             const storageKeys: string[] = [];
             const pat = /Lampa\.Storage\.get\(['"]([^'"]+)['"]/g;
             let m: RegExpExecArray | null;
             while ((m = pat.exec(content)) !== null) storageKeys.push(m[1]);
             if (storageKeys.length === 0) return true;
-            const pluginBase = path.basename(rel, ".js").split(/[/_]/)[0];
+            const pluginBase = basename(rel, ".js").split(/[/_]/)[0];
             return storageKeys.every(
               (k) => k.startsWith(pluginBase) || k.startsWith("video_") || k.startsWith("online_")
             );
@@ -525,128 +589,63 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
     }
   );
 
-  // ── extract_template_html ──────────────────────────────────────────────────
-  server.tool(
+  // ── extract_template_html (alias of list_templates mode=html) ──────────────
+  server.registerTool(
     "extract_template_html",
-    "Extract the actual HTML markup from Lampa template files (src/templates/*.js). Shows template structure, CSS classes, data-binding placeholders, and data attributes. Useful for understanding UI structure without running the app.",
     {
-      name: z
-        .string()
-        .describe(
-          "Template name to find, e.g. 'card', 'modal', 'player', 'settings'. Matches by filename."
-        ),
+      description:
+        "Alias of list_templates mode=html. Extract HTML markup from Lampa template files (src/templates/*.js).",
+      inputSchema: {
+        name: z
+          .string()
+          .describe(
+            "Template name to find, e.g. 'card', 'modal', 'player', 'settings'. Matches by filename."
+          ),
+      },
     },
     async ({ name }) => {
-      const templatesDir = path.join(config.repoPath, "src", "templates");
-      if (!fileExists(templatesDir)) {
-        return {
-          content: [{ type: "text" as const, text: "src/templates/ directory not found." }],
-        };
-      }
-
-      const allFiles = listFilesRecursive(templatesDir, [".js"]);
-      const lower = name.toLowerCase();
-      const matches = allFiles.filter(
-        (f) =>
-          path.basename(f, ".js").toLowerCase() === lower ||
-          path.basename(f).toLowerCase().includes(lower)
-      );
-
-      if (matches.length === 0) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `No template matching "${name}" in src/templates/.\nUse list_templates to see all available template names.`,
-            },
-          ],
-        };
-      }
-
-      const results = matches.slice(0, 4).map((file) => {
-        const content = readFileSafe(file) ?? "";
-        const rel = path.relative(config.repoPath, file);
-
-        // Extract the template literal (between first ` and last `)
-        const tlMatch = content.match(/`([\s\S]+?)`/);
-        const html = tlMatch ? tlMatch[1].trim() : content.trim();
-
-        // Extract CSS classes
-        const classSet = new Set<string>();
-        const classPat = /class="([^"]+)"/g;
-        let m: RegExpExecArray | null;
-        while ((m = classPat.exec(html)) !== null) {
-          m[1].split(/\s+/).forEach((c) => classSet.add(c));
-        }
-
-        // Extract {placeholder} bindings
-        const bindingSet = new Set<string>();
-        const bindPat = /\{([a-z_][a-z0-9_]*)\}/g;
-        while ((m = bindPat.exec(html)) !== null) {
-          bindingSet.add(`{${m[1]}}`);
-        }
-
-        // Extract data-* attributes
-        const dataSet = new Set<string>();
-        const dataPat = /data-([a-z][a-z0-9-]*)/g;
-        while ((m = dataPat.exec(html)) !== null) {
-          dataSet.add(`data-${m[1]}`);
-        }
-
-        const meta: string[] = [];
-        if (classSet.size > 0)
-          meta.push(`**CSS classes (${classSet.size}):** \`${[...classSet].join("`, `")}\``);
-        if (bindingSet.size > 0)
-          meta.push(`**Data bindings:** \`${[...bindingSet].join("`, `")}\``);
-        if (dataSet.size > 0) meta.push(`**Data attributes:** \`${[...dataSet].join("`, `")}\``);
-
-        return [
-          `## ${rel}`,
-          meta.join("\n"),
-          ``,
-          `\`\`\`html`,
-          html.slice(0, 3000),
-          html.length > 3000 ? `\n<!-- …truncated -->` : "",
-          `\`\`\``,
-        ]
-          .filter((l) => l !== "")
-          .join("\n");
-      });
-
+      const text = await formatTemplates(config.fs, "html", name);
       return {
-        content: [{ type: "text" as const, text: results.join("\n\n") }],
+        content: [
+          {
+            type: "text" as const,
+            text: `> Prefer \`list_templates\` with mode=html.\n\n${text}`,
+          },
+        ],
       };
     }
   );
 
   // ── get_core_module ────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "get_core_module",
-    "Read a Lampa core module from src/core/. Core modules implement the fundamental Lampa APIs (storage, lang, player, api, component, etc.). Lists all available modules when no name is given.",
     {
-      name: z
-        .string()
-        .optional()
-        .describe(
-          "Module name, e.g. 'lang', 'storage', 'player', 'api', 'component'. Omit to list all."
-        ),
-      max_lines: z.number().optional().describe("Max lines to return. Default: 250."),
+      description:
+        "Read a Lampa core module from src/core/. Core modules implement the fundamental Lampa APIs (storage, lang, player, api, component, etc.). Lists all available modules when no name is given.",
+      inputSchema: {
+        name: z
+          .string()
+          .optional()
+          .describe(
+            "Module name, e.g. 'lang', 'storage', 'player', 'api', 'component'. Omit to list all."
+          ),
+        max_lines: z.number().optional().describe("Max lines to return. Default: 250."),
+      },
     },
     async ({ name, max_lines = 250 }) => {
-      const coreDir = path.join(config.repoPath, "src", "core");
-      if (!fileExists(coreDir)) {
+      const coreDir = "src/core";
+      if (!(await fileExists(config.fs, coreDir))) {
         return {
           content: [{ type: "text" as const, text: "src/core/ not found in repository." }],
         };
       }
 
       if (!name) {
-        // List all modules grouped by file vs. directory
-        const entries = fs
-          .readdirSync(coreDir, { withFileTypes: true })
-          .sort((a, b) => a.name.localeCompare(b.name));
-        const dirs = entries.filter((e) => e.isDirectory()).map((e) => `📁 ${e.name}/`);
-        const files = entries.filter((e) => !e.isDirectory()).map((e) => `📄 ${e.name}`);
+        const entries = (await config.fs.listDir(coreDir)).sort((a, b) =>
+          a.name.localeCompare(b.name)
+        );
+        const dirs = entries.filter((e) => e.type === "dir").map((e) => `📁 ${e.name}/`);
+        const files = entries.filter((e) => e.type === "file").map((e) => `📄 ${e.name}`);
 
         return {
           content: [
@@ -669,13 +668,13 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
       }
 
       const lower = name.toLowerCase().replace(/\.js$/, "");
-      const allFiles = listFilesRecursive(coreDir, [".js"]);
+      const allFiles = await listFilesRecursive(config.fs, coreDir, [".js"]);
       const match =
-        allFiles.find((f) => path.basename(f, ".js").toLowerCase() === lower) ??
-        allFiles.find((f) => path.basename(f).toLowerCase().includes(lower));
+        allFiles.find((f) => basename(f, ".js").toLowerCase() === lower) ??
+        allFiles.find((f) => basename(f).toLowerCase().includes(lower));
 
       if (!match) {
-        const available = allFiles.map((f) => path.basename(f, ".js")).join(", ");
+        const available = allFiles.map((f) => basename(f, ".js")).join(", ");
         return {
           content: [
             {
@@ -686,18 +685,17 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
         };
       }
 
-      const content = readFileSafe(match) ?? "";
+      const content = (await readFileSafe(config.fs, match)) ?? "";
       const lines = content.split("\n");
       const truncated = lines.length > max_lines;
       const shown = truncated ? lines.slice(0, max_lines).join("\n") : content;
-      const rel = path.relative(config.repoPath, match);
 
       return {
         content: [
           {
             type: "text" as const,
             text: [
-              `# ${rel}  (${lines.length} lines${truncated ? `, first ${max_lines} shown` : ""})`,
+              `# ${match}  (${lines.length} lines${truncated ? `, first ${max_lines} shown` : ""})`,
               ``,
               "```javascript",
               shown,
@@ -713,30 +711,31 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
   );
 
   // ── explain_lampa_pattern ──────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "explain_lampa_pattern",
-    "Get a detailed explanation and real extracted code examples for any core Lampa development pattern. Combines a written guide with live source examples — the fastest way to understand how Lampa works.",
     {
-      pattern: z
-        .enum([
-          "iife-plugin",
-          "storage",
-          "settings",
-          "events",
-          "component",
-          "request",
-          "template",
-          "activity",
-          "player-hook",
-          "maker",
-        ])
-        .describe(
-          "Pattern to explain: iife-plugin | storage | settings | events | component | request | template | activity | player-hook | maker"
-        ),
+      description:
+        "Get a detailed explanation and real extracted code examples for any core Lampa development pattern. Combines a written guide with live source examples — the fastest way to understand how Lampa works.",
+      inputSchema: {
+        pattern: z
+          .enum([
+            "iife-plugin",
+            "storage",
+            "settings",
+            "events",
+            "component",
+            "request",
+            "template",
+            "activity",
+            "player-hook",
+            "maker",
+          ])
+          .describe(
+            "Pattern to explain: iife-plugin | storage | settings | events | component | request | template | activity | player-hook | maker"
+          ),
+      },
     },
     async ({ pattern }) => {
-      const rp = config.repoPath;
-
       type PatternMeta = {
         title: string;
         description: string;
@@ -847,7 +846,7 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
             "- Retrieve DOM: `var el = Lampa.Template.get('my_tpl', { title: movie.title });`",
             "- Placeholders use `{key}` syntax in the HTML string",
             "- Templates in src/templates/*.js are auto-registered by the app",
-            "- Use `extract_template_html` tool to inspect existing template HTML",
+            "- Use `list_templates` with mode=html (or alias `extract_template_html`) to inspect existing template HTML",
             "- Register templates early (inside `init()`) before any component creates them",
           ],
         },
@@ -911,10 +910,10 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
         };
       }
 
-      const searchRoot = path.join(rp, meta.searchIn);
-      const hits = searchCode(searchRoot, meta.searchFor, ["*.js"], false).slice(0, 10);
+      const hits = (await searchCode(config.fs, meta.searchFor, ["*.js"], false))
+        .filter((m) => m.file === meta.searchIn || m.file.startsWith(`${meta.searchIn}/`))
+        .slice(0, 10);
 
-      // Build snippets (up to 3 distinct files, ~12 lines of context)
       const examples: string[] = [];
       const seenFiles = new Set<string>();
       for (const hit of hits) {
@@ -922,8 +921,7 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
         if (seenFiles.has(hit.file)) continue;
         seenFiles.add(hit.file);
 
-        const abs = path.join(rp, hit.file);
-        const fileContent = readFileSafe(abs);
+        const fileContent = await readFileSafe(config.fs, hit.file);
         if (!fileContent) continue;
 
         const fileLines = fileContent.split("\n");

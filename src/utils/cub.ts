@@ -1,4 +1,4 @@
-import path from "node:path";
+import type { RepoFs } from "../fs/types.js";
 import { listFilesRecursive, readFileSafe, fileExists } from "./fs.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -358,18 +358,15 @@ function addHit(
   });
 }
 
-export function extractLampaCubApi(repoPath: string): LampaCubEndpoint[] {
+export async function extractLampaCubApi(fs: RepoFs): Promise<LampaCubEndpoint[]> {
   const map = new Map<string, LampaCubEndpoint>();
-  const srcRoot = path.join(repoPath, "src");
-  const pluginsRoot = path.join(repoPath, "plugins");
-  const roots = [srcRoot, pluginsRoot].filter((r) => fileExists(r));
-
+  const roots = ["src", "plugins"];
   for (const root of roots) {
-    const files = listFilesRecursive(root, [".js"]);
-    for (const abs of files) {
-      const content = readFileSafe(abs);
+    if (!(await fileExists(fs, root))) continue;
+    const files = await listFilesRecursive(fs, root, [".js"]);
+    for (const rel of files) {
+      const content = await readFileSafe(fs, rel);
       if (!content) continue;
-      const rel = path.relative(repoPath, abs);
       const lines = content.split("\n");
 
       for (let i = 0; i < lines.length; i++) {
@@ -512,11 +509,11 @@ export function extractLampaCubApi(repoPath: string): LampaCubEndpoint[] {
   );
 }
 
-export function findLampaCubEndpoint(
-  repoPath: string,
+export async function findLampaCubEndpoint(
+  fs: RepoFs,
   query: string
-): LampaCubEndpoint | undefined {
-  const all = extractLampaCubApi(repoPath);
+): Promise<LampaCubEndpoint | undefined> {
+  const all = await extractLampaCubApi(fs);
   const lower = query.toLowerCase();
   return all.find(
     (e) =>
