@@ -2,7 +2,15 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import type { Config } from "../config.js";
 import { joinRepo } from "../fs/paths.js";
 import { readFileSafe, fileExists } from "../utils/fs.js";
-import { findSettingsInRepo, findApiCallsInRepo } from "../utils/lampa.js";
+import {
+  findSettingsInRepo,
+  findApiCallsInRepo,
+  formatSettingsIndex,
+  formatApiIndex,
+  LAMPA_LANDMARKS,
+  LAMPA_EDIT_RULES,
+  LAMPA_API_SURFACE_KEYS,
+} from "../utils/lampa.js";
 import { extractLampaCubApi } from "../utils/cub.js";
 
 interface PackageJson {
@@ -11,12 +19,7 @@ interface PackageJson {
   scripts?: Record<string, string>;
 }
 
-function indexText(indexed: unknown): string {
-  return typeof indexed === "string" ? indexed : JSON.stringify(indexed, null, 2);
-}
-
 export function registerResources(server: McpServer, config: Config): void {
-  // resource://repo/overview
   server.registerResource(
     "repo-overview",
     "repo://overview",
@@ -36,7 +39,6 @@ export function registerResources(server: McpServer, config: Config): void {
     }
   );
 
-  // resource://repo/scripts
   server.registerResource(
     "repo-scripts",
     "repo://scripts",
@@ -48,7 +50,6 @@ export function registerResources(server: McpServer, config: Config): void {
     }
   );
 
-  // resource://docs/index
   server.registerResource(
     "docs-index",
     "docs://index",
@@ -72,7 +73,6 @@ export function registerResources(server: McpServer, config: Config): void {
     }
   );
 
-  // resource://settings/catalog
   server.registerResource(
     "settings-catalog",
     "settings://catalog",
@@ -80,14 +80,13 @@ export function registerResources(server: McpServer, config: Config): void {
     async (uri) => {
       const indexed = await config.fs.readIndex?.("settings-catalog");
       if (indexed != null) {
-        return { contents: [{ uri: uri.href, text: indexText(indexed) }] };
+        return { contents: [{ uri: uri.href, text: formatSettingsIndex(indexed) }] };
       }
       const result = await findSettingsInRepo(config.fs);
       return { contents: [{ uri: uri.href, text: result }] };
     }
   );
 
-  // resource://api/integrations
   server.registerResource(
     "api-integrations",
     "api://integrations",
@@ -95,14 +94,13 @@ export function registerResources(server: McpServer, config: Config): void {
     async (uri) => {
       const indexed = await config.fs.readIndex?.("api-integrations");
       if (indexed != null) {
-        return { contents: [{ uri: uri.href, text: indexText(indexed) }] };
+        return { contents: [{ uri: uri.href, text: formatApiIndex(indexed) }] };
       }
       const result = await findApiCallsInRepo(config.fs);
       return { contents: [{ uri: uri.href, text: result }] };
     }
   );
 
-  // resource://cub/lampa-api
   server.registerResource(
     "cub-lampa-api",
     "cub://lampa-api",
@@ -112,12 +110,74 @@ export function registerResources(server: McpServer, config: Config): void {
     async (uri) => {
       const indexed = await config.fs.readIndex?.("cub-api");
       if (indexed != null) {
-        return { contents: [{ uri: uri.href, text: indexText(indexed) }] };
+        return {
+          contents: [
+            {
+              uri: uri.href,
+              text: Array.isArray(indexed)
+                ? JSON.stringify(indexed, null, 2)
+                : typeof indexed === "string"
+                  ? indexed
+                  : JSON.stringify(indexed, null, 2),
+            },
+          ],
+        };
       }
       const endpoints = await extractLampaCubApi(config.fs);
       return {
         contents: [{ uri: uri.href, text: JSON.stringify(endpoints, null, 2) }],
       };
+    }
+  );
+
+  server.registerResource(
+    "lampa-landmarks",
+    "lampa://landmarks",
+    {
+      description:
+        "Ordered landmark files agents should read first when working on Lampa (roles included).",
+    },
+    async (uri) => {
+      const lines = LAMPA_LANDMARKS.map((l, i) => `${i + 1}. \`${l.path}\` — ${l.role}`);
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: `# Lampa landmarks\n\n${lines.join("\n")}`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerResource(
+    "lampa-edit-rules",
+    "lampa://edit-rules",
+    {
+      description:
+        "What to edit vs avoid (src/plugins vs public/build). Prevents agents from changing generated copies.",
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, text: LAMPA_EDIT_RULES }],
+    })
+  );
+
+  server.registerResource(
+    "lampa-api-surface",
+    "lampa://api-surface",
+    {
+      description: "Keys exported on window.Lampa from src/app.js initClass (plugin-visible API).",
+    },
+    async (uri) => {
+      const text = [
+        `# window.Lampa API surface`,
+        ``,
+        `Source: \`src/app.js\` → \`initClass()\`.`,
+        `Deprecated for new work: InteractionMain, InteractionCategory, InteractionLine (see UPGRADE.md).`,
+        ``,
+        ...LAMPA_API_SURFACE_KEYS.map((k) => `- Lampa.${k}`),
+      ].join("\n");
+      return { contents: [{ uri: uri.href, text }] };
     }
   );
 }

@@ -2,7 +2,103 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { Config } from "../config.js";
 import { readFileSafe, fileExists } from "../utils/fs.js";
+import { searchCode } from "../utils/search.js";
 import { inferFeatureFiles, detectRisks } from "../utils/lampa.js";
+
+interface AnchorHit {
+  line: number; // 1-based
+  kind: string;
+  label: string;
+}
+
+function findAnchor(content: string): AnchorHit | null {
+  const lines = content.split("\n");
+  const patterns: Array<{ re: RegExp; kind: string; label: (m: RegExpMatchArray) => string }> = [
+    {
+      re: /(?:^|\s)function\s+([A-Za-z_$][\w$]*)\s*\(/,
+      kind: "function",
+      label: (m) => m[1],
+    },
+    {
+      re: /SettingsApi\.add\s*\(/,
+      kind: "SettingsApi.add",
+      label: () => "SettingsApi.add",
+    },
+    {
+      re: /Listener\.follow\s*\(/,
+      kind: "Listener.follow",
+      label: () => "Listener.follow",
+    },
+    {
+      re: /Component\.add\s*\(/,
+      kind: "Component.add",
+      label: () => "Component.add",
+    },
+    {
+      re: /export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s*([A-Za-z_$][\w$]*)?/,
+      kind: "export",
+      label: (m) => m[1] ?? "export",
+    },
+    {
+      re: /exports\.([A-Za-z_$][\w$]*)/,
+      kind: "export",
+      label: (m) => m[1],
+    },
+  ];
+
+  for (let i = 0; i < lines.length; i++) {
+    for (const p of patterns) {
+      const m = lines[i].match(p.re);
+      if (m) {
+        return { line: i + 1, kind: p.kind, label: p.label(m) };
+      }
+    }
+  }
+  return null;
+}
+
+function buildUnifiedDiffSuggestion(
+  file: string,
+  content: string,
+  request: string
+): string {
+  const lines = content.split("\n");
+  const anchor = findAnchor(content);
+  const anchorLine = anchor?.line ?? Math.min(10, Math.max(lines.length, 1));
+  const ctxBefore = 3;
+  const ctxAfter = 3;
+  const start = Math.max(1, anchorLine - ctxBefore);
+  const end = Math.min(lines.length, anchorLine + ctxAfter);
+  const oldCount = end - start + 1;
+  const newCount = oldCount + 2;
+
+  const hunkLines: string[] = [];
+  for (let ln = start; ln <= end; ln++) {
+    const text = lines[ln - 1] ?? "";
+    hunkLines.push(` ${text}`);
+    if (ln === anchorLine) {
+      hunkLines.push(`+// TODO: ${request}`);
+      hunkLines.push(`+// Insert change near ${anchor?.kind ?? "anchor"} (${anchor?.label ?? "start"})`);
+    }
+  }
+
+  const header = anchor
+    ? `@@ -${start},${oldCount} +${start},${newCount} @@ ${anchor.kind}: ${anchor.label}`
+    : `@@ -${start},${oldCount} +${start},${newCount} @@`;
+
+  return [
+    `### ${file}`,
+    anchor
+      ? `Anchor: \`${anchor.kind}\` → \`${anchor.label}\` at line ${anchor.line}`
+      : `Anchor: first available context (no named symbol found)`,
+    "```diff",
+    `--- a/${file}`,
+    `+++ b/${file}`,
+    header,
+    ...hunkLines,
+    "```",
+  ].join("\n");
+}
 
 export function registerEditingTools(server: McpServer, config: Config): void {
   // ── draft_patch ────────────────────────────────────────────────────────────
@@ -10,7 +106,7 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     "draft_patch",
     {
       description:
-        "Draft a code patch for a Lampa change. Requires a prior plan_feature_change call. Returns annotated diff-style suggestions.",
+        "Draft a code patch for a Lampa change. Requires a prior plan_feature_change / plan_change call. Returns unified-diff suggestions anchored to real symbols in each target file.",
       inputSchema: {
         request: z.string().describe("The change to implement."),
         target_files: z
@@ -20,19 +116,21 @@ export function registerEditingTools(server: McpServer, config: Config): void {
         plan_context: z
           .string()
           .optional()
-          .describe("Paste the output of plan_feature_change here for best results."),
+          .describe("Paste the output of plan_feature_change / plan_change here for best results."),
       },
     },
     async ({ request, target_files, plan_context }) => {
       const files = target_files ?? (await inferFeatureFiles(config.fs, request));
       const risks = await detectRisks(config.fs, files);
 
-      const fileSnippets: string[] = [];
+      const diffs: string[] = [];
       for (const f of files.slice(0, 5)) {
-        if (!(await fileExists(config.fs, f))) continue;
+        if (!(await fileExists(config.fs, f))) {
+          diffs.push(`### ${f}\nFile not found — create new file or pick another target.`);
+          continue;
+        }
         const content = (await readFileSafe(config.fs, f)) ?? "";
-        const preview = content.split("\n").slice(0, 30).join("\n");
-        fileSnippets.push(`### ${f} (first 30 lines)\n\`\`\`javascript\n${preview}\n\`\`\``);
+        diffs.push(buildUnifiedDiffSuggestion(f, content, request));
       }
 
       const draft = [
@@ -45,8 +143,8 @@ export function registerEditingTools(server: McpServer, config: Config): void {
           .map((f) => `- ${f}`)
           .join("\n"),
         ``,
-        `## File previews`,
-        fileSnippets.join("\n\n"),
+        `## Unified-diff suggestions`,
+        diffs.join("\n\n") || "No target files available.",
         ``,
         `## Risks before editing`,
         risks.length > 0 ? risks.map((r) => `⚠ ${r}`).join("\n") : "✓ None detected.",
@@ -54,53 +152,17 @@ export function registerEditingTools(server: McpServer, config: Config): void {
         `## Patch guidance`,
         `Based on Lampa conventions:`,
         ``,
-        `1. **Plugin entry point pattern** (if adding a plugin):`,
-        `\`\`\`javascript`,
-        `// plugins/myplugin/main.js`,
-        `(function() {`,
-        `  'use strict';`,
+        `1. **Plugin entry point pattern** (if adding a plugin): use \`scaffold_plugin_integration\`.`,
+        `2. **Settings:** \`Lampa.Settings.add(...)\` / \`SettingsApi.add(...)\``,
+        `3. **Storage:** \`Lampa.Storage.get/set\``,
+        `4. **Events:** \`Lampa.Listener.follow\` / \`Lampa.Listener.send\``,
         ``,
-        `  function init() {`,
-        `    // Register settings`,
-        `    Lampa.Settings.add('myplugin', {`,
-        `      component: 'myplugin',`,
-        `      name: 'My Plugin'`,
-        `    });`,
-        ``,
-        `    // Hook into events`,
-        `    Lampa.Listener.follow('full', function(e) {`,
-        `      if (e.type === 'complite') {`,
-        `        // inject UI`,
-        `      }`,
-        `    });`,
-        `  }`,
-        ``,
-        `  if (window.appready) init();`,
-        `  else $(document).on('appready', init);`,
-        `})();`,
-        `\`\`\``,
-        ``,
-        `2. **Settings entry pattern**:`,
-        `\`\`\`javascript`,
-        `Lampa.Settings.add('section_name', {`,
-        `  component: 'component_name',`,
-        `  name: 'Display Name',`,
-        `  icon: '<svg>...</svg>'`,
-        `});`,
-        `\`\`\``,
-        ``,
-        `3. **Storage read/write pattern**:`,
-        `\`\`\`javascript`,
-        `var value = Lampa.Storage.get('my_key', 'default_value');`,
-        `Lampa.Storage.set('my_key', newValue);`,
-        `\`\`\``,
-        ``,
-        `> ⚠ This is a guided draft. Read target files with \`read_file_segment\` and adapt patterns exactly to match the surrounding code style.`,
+        `> ⚠ Guided draft only. Read the full anchor region with \`read_file_segment\` and adapt to surrounding style.`,
       ]
         .filter((l) => l !== undefined)
         .join("\n");
 
-      return { content: [{ type: "text", text: draft }] };
+      return { content: [{ type: "text" as const, text: draft }] };
     }
   );
 
@@ -109,7 +171,7 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     "insert_hook",
     {
       description:
-        "Find the best Lampa.Listener or Lampa.Event hook point for a given trigger or lifecycle event.",
+        "Find the best Lampa.Listener / Player.listener hook point for a trigger. Searches live code plus recommended patterns.",
       inputSchema: {
         trigger: z
           .string()
@@ -120,12 +182,58 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     },
     async ({ trigger }) => {
       const lower = trigger.toLowerCase();
-      const hints: string[] = [];
+      const keyword =
+        lower
+          .replace(/[^a-z0-9\s]/g, " ")
+          .split(/\s+/)
+          .filter((w) => w.length > 2)
+          .sort((a, b) => b.length - a.length)[0] ?? trigger;
+
+      const searchPatterns = [
+        "Lampa.Listener.follow",
+        "Player.listener.follow",
+        "Lampa.Listener.send",
+      ];
+
+      const liveHits: string[] = [];
+      for (const pat of searchPatterns) {
+        const withKeyword = await searchCode(config.fs, keyword, ["*.js"], false, "src");
+        const base = await searchCode(config.fs, pat, ["*.js"], false, "src");
+        const pluginBase = await searchCode(config.fs, pat, ["*.js"], false, "plugins");
+
+        const related = [...withKeyword, ...base, ...pluginBase].filter(
+          (m) =>
+            (m.text.includes("Listener.follow") ||
+              m.text.includes("listener.follow") ||
+              m.text.includes("Listener.send")) &&
+            (m.text.toLowerCase().includes(keyword.toLowerCase()) ||
+              lower.split(/\s+/).some((w) => w.length > 3 && m.text.toLowerCase().includes(w)))
+        );
+
+        for (const m of related.slice(0, 8)) {
+          const line = `${m.file}:${m.line}  ${m.text}`;
+          if (!liveHits.includes(line)) liveHits.push(line);
+        }
+      }
+
+      // Fallback broader search if keyword filter was too tight
+      if (liveHits.length === 0) {
+        for (const pat of searchPatterns) {
+          const hits = [
+            ...(await searchCode(config.fs, pat, ["*.js"], false, "src")),
+            ...(await searchCode(config.fs, pat, ["*.js"], false, "plugins")),
+          ];
+          for (const m of hits.slice(0, 5)) {
+            const line = `${m.file}:${m.line}  ${m.text}`;
+            if (!liveHits.includes(line)) liveHits.push(line);
+          }
+        }
+      }
 
       const eventMap: Array<{ keywords: string[]; event: string; description: string }> = [
         {
           keywords: ["player", "play", "video"],
-          event: "Lampa.Listener.follow('player', fn)",
+          event: "Lampa.Listener.follow('player', fn)  // or Player.listener.follow",
           description: "Player lifecycle: start, end, pause, resume, destroy",
         },
         {
@@ -165,26 +273,29 @@ export function registerEditingTools(server: McpServer, config: Config): void {
         },
       ];
 
+      const recommended: string[] = [];
       for (const entry of eventMap) {
         if (entry.keywords.some((k) => lower.includes(k))) {
-          hints.push(`### ${entry.event}\n${entry.description}`);
+          recommended.push(`### ${entry.event}\n${entry.description}`);
         }
       }
-
-      if (hints.length === 0) {
-        hints.push(
-          `No specific hook found for "${trigger}". Try searching with: search_code('Lampa.Listener') to see all registered hooks in the repo.`
+      if (recommended.length === 0) {
+        recommended.push(
+          `No static recommendation matched "${trigger}". Prefer live hits below, or search \`Lampa.Listener\` / \`Player.listener\`.`
         );
       }
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: `# Hook insertion for: "${trigger}"\n\n${hints.join("\n\n")}`,
-          },
-        ],
-      };
+      const text = [
+        `# Hook insertion for: "${trigger}"`,
+        ``,
+        `## Recommended pattern`,
+        recommended.join("\n\n"),
+        ``,
+        `## Live code hits (keyword: "${keyword}")`,
+        liveHits.slice(0, 20).join("\n") || "No matching Listener.follow / Listener.send / Player.listener.follow hits.",
+      ].join("\n");
+
+      return { content: [{ type: "text" as const, text }] };
     }
   );
 
@@ -259,7 +370,7 @@ export function registerEditingTools(server: McpServer, config: Config): void {
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: `# New setting: ${key}\n\n## Registration snippet\n\`\`\`javascript\n${snippet}\n\`\`\`\n\n## Reading the value\n\`\`\`javascript\n${read}\n\`\`\``,
           },
         ],
@@ -272,7 +383,7 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     "scaffold_plugin_integration",
     {
       description:
-        "Generate a complete Lampa plugin scaffold (folder structure + main.js boilerplate) for a new plugin.",
+        "Generate a complete Lampa plugin scaffold (folder structure + main.js boilerplate) for a new plugin. Prefer this over generate_plugin_boilerplate.",
       inputSchema: {
         plugin_name: z.string().describe("Plugin name, e.g. 'my_feature'. Use snake_case."),
         description: z.string().describe("One-sentence description of what the plugin does."),
@@ -357,7 +468,7 @@ Add to the appropriate assembly.json or load via a \`<script>\` tag referencing
 \`plugins/${plugin_name}/main.js\`.
 `;
 
-      return { content: [{ type: "text", text: scaffold }] };
+      return { content: [{ type: "text" as const, text: scaffold }] };
     }
   );
 }

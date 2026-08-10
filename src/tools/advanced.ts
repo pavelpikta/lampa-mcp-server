@@ -4,9 +4,38 @@ import type { Config } from "../config.js";
 import { basename, joinRepo } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
+import { formatTemplates } from "../utils/lampa_deep.js";
 
 function indexText(indexed: unknown): string {
-  return typeof indexed === "string" ? indexed : JSON.stringify(indexed, null, 2);
+  if (typeof indexed === "string") return indexed;
+  if (indexed && typeof indexed === "object" && "hits" in indexed) {
+    const hits = (
+      indexed as {
+        hits: {
+          file: string;
+          key?: string;
+          event?: string;
+          op?: string;
+          bus?: string;
+          text?: string;
+          line?: number;
+        }[];
+        note?: string;
+      }
+    ).hits;
+    const note = (indexed as { note?: string }).note;
+    const lines = hits.slice(0, 300).map((h) => {
+      const label = h.key ?? h.event ?? h.text ?? "";
+      const meta = [h.op, h.bus].filter(Boolean).join("/");
+      return `${h.file}${h.line ? `:${h.line}` : ""}${meta ? ` [${meta}]` : ""}  ${label}`;
+    });
+    return [note ? `# ${note}` : null, ...lines].filter(Boolean).join("\n");
+  }
+  return JSON.stringify(indexed, null, 2);
+}
+
+function isR2Backend(config: Config): boolean {
+  return config.label.startsWith("r2://");
 }
 
 export function registerAdvancedTools(server: McpServer, config: Config): void {
@@ -87,6 +116,27 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
       const indexed = await config.fs.readIndex?.("storage-schema");
       if (indexed != null && scope === "all" && !key) {
         return { content: [{ type: "text" as const, text: indexText(indexed) }] };
+      }
+
+      if (indexed == null && isR2Backend(config) && scope === "all" && !key) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                `# Storage schema index missing`,
+                ``,
+                `Full-tree Storage scans are disabled on R2 backends without a prebuilt index.`,
+                ``,
+                `Narrow the query:`,
+                `- Pass \`scope: "src"\` or \`scope: "plugins"\``,
+                `- Or pass \`key: "<storage_key>"\` to look up one key`,
+                ``,
+                `Or rebuild indexes (snapshot upload) so \`indexes/storage-schema\` is available.`,
+              ].join("\n"),
+            },
+          ],
+        };
       }
 
       const searchRoot = scope === "plugins" ? "plugins" : scope === "src" ? "src" : "";
@@ -185,6 +235,27 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
       const indexed = await config.fs.readIndex?.("events");
       if (indexed != null && scope === "all" && !detail) {
         return { content: [{ type: "text" as const, text: indexText(indexed) }] };
+      }
+
+      if (indexed == null && isR2Backend(config) && scope === "all") {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                `# Events index missing`,
+                ``,
+                `Full-tree event scans are disabled on R2 backends without a prebuilt index.`,
+                ``,
+                `Narrow the query:`,
+                `- Pass \`scope: "src"\` or \`scope: "plugins"\``,
+                ``,
+                `Or rebuild indexes (snapshot upload) so \`indexes/events\` is available.`,
+                `For a single event, prefer \`trace_event\`.`,
+              ].join("\n"),
+            },
+          ],
+        };
       }
 
       const searchRoot = scope === "plugins" ? "plugins" : scope === "src" ? "src" : "";
@@ -518,12 +589,12 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
     }
   );
 
-  // ── extract_template_html ──────────────────────────────────────────────────
+  // ── extract_template_html (alias of list_templates mode=html) ──────────────
   server.registerTool(
     "extract_template_html",
     {
       description:
-        "Extract the actual HTML markup from Lampa template files (src/templates/*.js). Shows template structure, CSS classes, data-binding placeholders, and data attributes. Useful for understanding UI structure without running the app.",
+        "Alias of list_templates mode=html. Extract HTML markup from Lampa template files (src/templates/*.js).",
       inputSchema: {
         name: z
           .string()
@@ -533,81 +604,14 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
       },
     },
     async ({ name }) => {
-      const templatesDir = "src/templates";
-      if (!(await fileExists(config.fs, templatesDir))) {
-        return {
-          content: [{ type: "text" as const, text: "src/templates/ directory not found." }],
-        };
-      }
-
-      const allFiles = await listFilesRecursive(config.fs, templatesDir, [".js"]);
-      const lower = name.toLowerCase();
-      const matches = allFiles.filter(
-        (f) =>
-          basename(f, ".js").toLowerCase() === lower || basename(f).toLowerCase().includes(lower)
-      );
-
-      if (matches.length === 0) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `No template matching "${name}" in src/templates/.\nUse list_templates to see all available template names.`,
-            },
-          ],
-        };
-      }
-
-      const results = [];
-      for (const file of matches.slice(0, 4)) {
-        const content = (await readFileSafe(config.fs, file)) ?? "";
-
-        const tlMatch = content.match(/`([\s\S]+?)`/);
-        const html = tlMatch ? tlMatch[1].trim() : content.trim();
-
-        const classSet = new Set<string>();
-        const classPat = /class="([^"]+)"/g;
-        let m: RegExpExecArray | null;
-        while ((m = classPat.exec(html)) !== null) {
-          m[1].split(/\s+/).forEach((c) => classSet.add(c));
-        }
-
-        const bindingSet = new Set<string>();
-        const bindPat = /\{([a-z_][a-z0-9_]*)\}/g;
-        while ((m = bindPat.exec(html)) !== null) {
-          bindingSet.add(`{${m[1]}}`);
-        }
-
-        const dataSet = new Set<string>();
-        const dataPat = /data-([a-z][a-z0-9-]*)/g;
-        while ((m = dataPat.exec(html)) !== null) {
-          dataSet.add(`data-${m[1]}`);
-        }
-
-        const meta: string[] = [];
-        if (classSet.size > 0)
-          meta.push(`**CSS classes (${classSet.size}):** \`${[...classSet].join("`, `")}\``);
-        if (bindingSet.size > 0)
-          meta.push(`**Data bindings:** \`${[...bindingSet].join("`, `")}\``);
-        if (dataSet.size > 0) meta.push(`**Data attributes:** \`${[...dataSet].join("`, `")}\``);
-
-        results.push(
-          [
-            `## ${file}`,
-            meta.join("\n"),
-            ``,
-            `\`\`\`html`,
-            html.slice(0, 3000),
-            html.length > 3000 ? `\n<!-- …truncated -->` : "",
-            `\`\`\``,
-          ]
-            .filter((l) => l !== "")
-            .join("\n")
-        );
-      }
-
+      const text = await formatTemplates(config.fs, "html", name);
       return {
-        content: [{ type: "text" as const, text: results.join("\n\n") }],
+        content: [
+          {
+            type: "text" as const,
+            text: `> Prefer \`list_templates\` with mode=html.\n\n${text}`,
+          },
+        ],
       };
     }
   );
@@ -842,7 +846,7 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
             "- Retrieve DOM: `var el = Lampa.Template.get('my_tpl', { title: movie.title });`",
             "- Placeholders use `{key}` syntax in the HTML string",
             "- Templates in src/templates/*.js are auto-registered by the app",
-            "- Use `extract_template_html` tool to inspect existing template HTML",
+            "- Use `list_templates` with mode=html (or alias `extract_template_html`) to inspect existing template HTML",
             "- Register templates early (inside `init()`) before any component creates them",
           ],
         },

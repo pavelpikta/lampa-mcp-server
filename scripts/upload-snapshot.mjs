@@ -157,15 +157,38 @@ const storageHits = extractRegexIndex(
   String.raw`Lampa\.Storage\.(get|set|cache)\(\s*['"]([^'"]+)['"]`,
   (rel, m) => ({ file: rel, op: m[1], key: m[2] })
 );
-const eventHits = extractRegexIndex(
+const eventHits = [
+  ...extractRegexIndex(
+    files,
+    String.raw`Lampa\.Listener\.(follow|send)\(\s*['"]([^'"]+)['"]`,
+    (rel, m) => ({ file: rel, op: m[1], event: m[2], bus: "Listener" })
+  ),
+  ...extractRegexIndex(
+    files,
+    String.raw`Player\.listener\.(follow|send)\(\s*['"]([^'"]+)['"]`,
+    (rel, m) => ({ file: rel, op: m[1], event: m[2], bus: "Player" })
+  ),
+];
+const settingsHits = [
+  ...extractRegexIndex(
+    files,
+    String.raw`Lampa\.Settings\.add\(\s*['"]([^'"]+)['"]`,
+    (rel, m) => ({ file: rel, component: m[1], api: "Settings.add" })
+  ),
+  ...extractRegexIndex(
+    files,
+    String.raw`SettingsApi\.add(?:Component|Param)\(\s*['"]?([^'")\s]+)`,
+    (rel, m) => ({ file: rel, component: m[1], api: "SettingsApi" })
+  ),
+];
+const apiHits = extractRegexIndex(
   files,
-  String.raw`Lampa\.Listener\.(follow|send)\(\s*['"]([^'"]+)['"]`,
-  (rel, m) => ({ file: rel, op: m[1], event: m[2] })
-);
-const settingsHits = extractRegexIndex(
-  files,
-  String.raw`Lampa\.Settings\.add\(\s*['"]([^'"]+)['"]`,
-  (rel, m) => ({ file: rel, component: m[1] })
+  String.raw`(Lampa\.Api|Lampa\.Network|new Reguest|fetch\(|\$\.ajax)`,
+  (rel, m, content) => {
+    const line = content.slice(0, m.index).split("\n").length;
+    const text = content.split("\n")[line - 1]?.trim().slice(0, 160) ?? m[0];
+    return { file: rel, line, text, kind: m[1] };
+  }
 );
 
 /** @type {Record<string, unknown>} */
@@ -178,12 +201,17 @@ const indexes = {
   events: {
     generatedAt: manifest.generatedAt,
     hits: eventHits,
-    note: "Precomputed Lampa.Listener follow/send references",
+    note: "Precomputed Listener/Player event follow/send references",
   },
   "settings-catalog": {
     generatedAt: manifest.generatedAt,
     hits: settingsHits,
-    note: "Precomputed Lampa.Settings.add registrations",
+    note: "Precomputed Settings.add / SettingsApi registrations",
+  },
+  "api-integrations": {
+    generatedAt: manifest.generatedAt,
+    hits: apiHits,
+    note: "Precomputed API/network call patterns",
   },
 };
 

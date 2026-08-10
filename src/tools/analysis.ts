@@ -2,14 +2,16 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { Config } from "../config.js";
 import { basename } from "../fs/paths.js";
-import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
+import { listFilesRecursive, fileExists } from "../utils/fs.js";
 import { searchCode, getImports } from "../utils/search.js";
-import { parseLangFile } from "../utils/lampa_deep.js";
+import { formatI18nKeys, formatI18nCoverage } from "../utils/lampa_deep.js";
 import {
   findSettingsInRepo,
   findApiCallsInRepo,
   inferFeatureFiles,
   LAMPA_FEATURE_MAP,
+  formatSettingsIndex,
+  formatApiIndex,
 } from "../utils/lampa.js";
 
 export function registerAnalysisTools(server: McpServer, config: Config): void {
@@ -26,11 +28,12 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
     async ({ keyword }) => {
       const indexed = await config.fs.readIndex?.("settings-catalog");
       if (indexed != null && !keyword) {
-        const text = typeof indexed === "string" ? indexed : JSON.stringify(indexed, null, 2);
-        return { content: [{ type: "text", text }] };
+        return {
+          content: [{ type: "text" as const, text: formatSettingsIndex(indexed) }],
+        };
       }
       const result = await findSettingsInRepo(config.fs, keyword);
-      return { content: [{ type: "text", text: result }] };
+      return { content: [{ type: "text" as const, text: result }] };
     }
   );
 
@@ -50,11 +53,12 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
     async ({ provider }) => {
       const indexed = await config.fs.readIndex?.("api-integrations");
       if (indexed != null && !provider) {
-        const text = typeof indexed === "string" ? indexed : JSON.stringify(indexed, null, 2);
-        return { content: [{ type: "text", text }] };
+        return {
+          content: [{ type: "text" as const, text: formatApiIndex(indexed) }],
+        };
       }
       const result = await findApiCallsInRepo(config.fs, provider);
-      return { content: [{ type: "text", text: result }] };
+      return { content: [{ type: "text" as const, text: result }] };
     }
   );
 
@@ -97,12 +101,41 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
     }
   );
 
-  // ── find_translation_keys ──────────────────────────────────────────────────
+  // ── i18n_check ─────────────────────────────────────────────────────────────
+  server.registerTool(
+    "i18n_check",
+    {
+      description:
+        "Unified i18n tool. mode=keys finds translation key definitions/usages; mode=coverage compares all lang files against en.js.",
+      inputSchema: {
+        mode: z
+          .enum(["keys", "coverage"])
+          .describe("keys = look up definitions/usages; coverage = per-language coverage report."),
+        key: z
+          .string()
+          .optional()
+          .describe("For mode=keys: specific translation key, e.g. 'settings_language'."),
+        show_missing: z
+          .boolean()
+          .optional()
+          .describe("For mode=coverage: include missing/extra key lists. Default: true."),
+      },
+    },
+    async ({ mode, key, show_missing = true }) => {
+      const text =
+        mode === "coverage"
+          ? await formatI18nCoverage(config.fs, show_missing)
+          : await formatI18nKeys(config.fs, key);
+      return { content: [{ type: "text" as const, text }] };
+    }
+  );
+
+  // ── find_translation_keys (alias of i18n_check mode=keys) ──────────────────
   server.registerTool(
     "find_translation_keys",
     {
       description:
-        "Find translation key definitions and usages across all supported languages.",
+        "Alias of i18n_check mode=keys. Find translation key definitions and usages across languages.",
       inputSchema: {
         key: z
           .string()
@@ -111,57 +144,12 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
       },
     },
     async ({ key }) => {
-      const langDir = (await fileExists(config.fs, "src/lang"))
-        ? "src/lang"
-        : (await fileExists(config.fs, "public/lang"))
-          ? "public/lang"
-          : null;
-
-      if (!langDir) {
-        return {
-          content: [
-            { type: "text", text: "No lang directory found (checked src/lang/ and public/lang/)." },
-          ],
-        };
-      }
-
-      const langFiles = (await listFilesRecursive(config.fs, langDir, [".js"])).filter(
-        (f) => !f.endsWith("meta.js")
-      );
-
-      if (key) {
-        const results: string[] = [];
-        for (const lf of langFiles) {
-          const content = await readFileSafe(config.fs, lf);
-          if (!content) continue;
-          const lines = content.split("\n");
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i].includes(key)) {
-              results.push(`${basename(lf)}:${i + 1}  ${lines[i].trim()}`);
-            }
-          }
-        }
-        const usages = (await searchCode(config.fs, `Lang.translate('${key}'`, ["*.js"], false))
-          .concat(await searchCode(config.fs, `Lang.translate("${key}"`, ["*.js"], false))
-          .slice(0, 10)
-          .map((m) => `${m.file}:${m.line}  ${m.text.trim()}`);
-
-        const out = [
-          results.length > 0 ? results.join("\n") : `Key "${key}" not found in lang files.`,
-          usages.length > 0 ? `\n## Usages\n${usages.join("\n")}` : "",
-        ].join("\n");
-
-        return { content: [{ type: "text", text: out }] };
-      }
-
-      const keys = await parseLangFile(config.fs, `${langDir}/en.js`);
-      const langFilenames = langFiles.map((f) => basename(f));
-
+      const text = await formatI18nKeys(config.fs, key);
       return {
         content: [
           {
-            type: "text",
-            text: `Language directory: ${langDir}/\nFiles: ${langFilenames.join(", ")}\n\nKeys in en.js (${keys.length}):\n${keys.join(", ")}`,
+            type: "text" as const,
+            text: `> Prefer \`i18n_check\` with mode=keys.\n\n${text}`,
           },
         ],
       };

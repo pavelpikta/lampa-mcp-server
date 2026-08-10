@@ -3,7 +3,7 @@ import { createMcpHandler, getMcpAuthContext } from "agents/mcp/server";
 import type { Config } from "./config.js";
 import { R2RepoFs } from "./fs/r2.js";
 import { createLampaServer } from "./server.js";
-import { PublicHandler, resolveGitHubPat } from "./auth/github-handler.js";
+import { PublicHandler, resolveGitHubPat, type AuthProps } from "./auth/github-handler.js";
 
 export interface WorkerEnv {
   LAMPA_SOURCE: R2Bucket;
@@ -13,10 +13,24 @@ export interface WorkerEnv {
   SNAPSHOT_PREFIX?: string;
 }
 
+/** Isolate-lifetime R2RepoFs cache — avoids re-parsing bundle.json every request. */
+const fsCache = new Map<string, R2RepoFs>();
+
+function getSharedFs(env: WorkerEnv): R2RepoFs {
+  const prefix = env.SNAPSHOT_PREFIX ?? "lampa/";
+  const key = `${prefix}`;
+  let fs = fsCache.get(key);
+  if (!fs) {
+    fs = new R2RepoFs(env.LAMPA_SOURCE, prefix);
+    fsCache.set(key, fs);
+  }
+  return fs;
+}
+
 function workerConfig(env: WorkerEnv): Config {
   const prefix = env.SNAPSHOT_PREFIX ?? "lampa/";
   return {
-    fs: new R2RepoFs(env.LAMPA_SOURCE, prefix),
+    fs: getSharedFs(env),
     label: `r2://lampa-source/${prefix}`,
     docsPath: "build/doc",
   };
@@ -68,6 +82,14 @@ const apiHandler = {
   },
 };
 
+const PAT_CACHE_TTL_SECONDS = 30 * 60; // 30 minutes
+
+async function sha256Hex(value: string): Promise<string> {
+  const data = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export default new OAuthProvider({
   apiRoute: "/mcp",
   apiHandler,
@@ -85,11 +107,46 @@ export default new OAuthProvider({
   },
   /**
    * Accept a GitHub PAT in `Authorization: Bearer <token>`.
-   * No GitHub OAuth App (client id/secret) is required.
+   * Validated users are cached in OAUTH_KV (hash of token → profile) for 30m.
    */
   resolveExternalToken: async ({ token, env }) => {
+    const tokenHash = await sha256Hex(token);
+    const cacheKey = `pat-user:${tokenHash}`;
+
+    try {
+      const cached = await env.OAUTH_KV.get(cacheKey, "json");
+      if (
+        cached &&
+        typeof cached === "object" &&
+        "login" in cached &&
+        typeof (cached as AuthProps).login === "string"
+      ) {
+        const c = cached as AuthProps;
+        return {
+          props: {
+            login: c.login,
+            name: c.name,
+            email: c.email ?? "",
+          },
+        };
+      }
+    } catch {
+      // ignore cache read errors
+    }
+
     const props = await resolveGitHubPat(token, env);
     if (!props) return null;
-    return { props };
+
+    // Do not persist the raw PAT — only profile fields.
+    const toStore = { login: props.login, name: props.name, email: props.email };
+    try {
+      await env.OAUTH_KV.put(cacheKey, JSON.stringify(toStore), {
+        expirationTtl: PAT_CACHE_TTL_SECONDS,
+      });
+    } catch {
+      // ignore cache write errors
+    }
+
+    return { props: toStore };
   },
 });

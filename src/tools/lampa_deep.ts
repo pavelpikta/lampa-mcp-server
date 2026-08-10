@@ -2,14 +2,15 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { Config } from "../config.js";
 import { basename, joinRepo } from "../fs/paths.js";
-import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
+import { listFilesRecursive, readFileSafe, fileExists, readSegment } from "../utils/fs.js";
 import { searchCode, type SearchMatch } from "../utils/search.js";
 import {
   extractLampaApiUsage,
   extractEvents,
   extractProviderInfo,
-  parseLangFile,
   analyseComponentFile,
+  formatI18nCoverage,
+  formatTemplates,
 } from "../utils/lampa_deep.js";
 
 export function registerLampaDeepTools(server: McpServer, config: Config): void {
@@ -196,12 +197,12 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
     }
   );
 
-  // ── translation_coverage ───────────────────────────────────────────────────
+  // ── translation_coverage (alias of i18n_check mode=coverage) ───────────────
   server.registerTool(
     "translation_coverage",
     {
       description:
-        "Compare all Lampa language files against the English reference. Shows coverage percentage and lists missing/extra keys per language. Helps identify untranslated strings before shipping.",
+        "Alias of i18n_check mode=coverage. Compare all language files against English reference.",
       inputSchema: {
         show_missing: z
           .boolean()
@@ -210,89 +211,12 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
       },
     },
     async ({ show_missing = true }) => {
-      const langDir = (await fileExists(config.fs, "src/lang"))
-        ? "src/lang"
-        : (await fileExists(config.fs, "public/lang"))
-          ? "public/lang"
-          : null;
-
-      if (!langDir) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: "No language directory found (checked src/lang/ and public/lang/).",
-            },
-          ],
-        };
-      }
-
-      const langFiles = (await config.fs.listDir(langDir))
-        .filter((e) => e.type === "file" && e.name.endsWith(".js") && e.name !== "meta.js")
-        .map((e) => e.name)
-        .sort();
-
-      const enFile = joinRepo(langDir, "en.js");
-      if (!(await fileExists(config.fs, enFile))) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Reference file en.js not found in ${langDir}.`,
-            },
-          ],
-        };
-      }
-
-      const enKeys = await parseLangFile(config.fs, enFile);
-      const enCount = enKeys.length;
-
-      const rows: string[] = [
-        `# Translation Coverage`,
-        `**Directory:** ${langDir}`,
-        `**Reference:** en.js (${enCount} keys)`,
-        ``,
-        `| Lang | File | Keys | Coverage | Missing |`,
-        `|------|------|------|----------|---------|`,
-      ];
-
-      const details: string[] = [];
-
-      for (const file of langFiles) {
-        const langPath = joinRepo(langDir, file);
-        const keys = await parseLangFile(config.fs, langPath);
-        const missingKeys = enKeys.filter((k) => !keys.includes(k));
-        const extraKeys = keys.filter((k) => !enKeys.includes(k));
-        const covered = enCount - missingKeys.length;
-        const pct = enCount > 0 ? Math.round((covered / enCount) * 100) : 0;
-        const icon = pct === 100 ? "✅" : pct >= 90 ? "🟡" : "🔴";
-        const lang = file.replace(".js", "");
-
-        rows.push(
-          `| ${lang} | ${file} | ${keys.length} | ${icon} ${pct}% | ${missingKeys.length} |`
-        );
-
-        if (show_missing) {
-          if (missingKeys.length > 0) {
-            details.push(
-              `\n### ${lang} — ${missingKeys.length} missing key(s)`,
-              missingKeys.join(", ")
-            );
-          }
-          if (extraKeys.length > 0) {
-            details.push(
-              `### ${lang} — ${extraKeys.length} extra key(s) (not in en.js)`,
-              extraKeys.join(", ")
-            );
-          }
-        }
-      }
-
+      const text = await formatI18nCoverage(config.fs, show_missing);
       return {
         content: [
           {
             type: "text" as const,
-            text: [...rows, ...details].join("\n"),
+            text: `> Prefer \`i18n_check\` with mode=coverage.\n\n${text}`,
           },
         ],
       };
@@ -470,323 +394,177 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
     "list_templates",
     {
       description:
-        "List all Lampa UI templates in src/templates/. Optionally read a specific template's source to understand its HTML structure and data bindings.",
+        "List Lampa UI templates in src/templates/. Use mode=list (default), mode=html (extracted markup), or mode=raw (source JS). name is required for html/raw.",
       inputSchema: {
+        mode: z
+          .enum(["list", "html", "raw"])
+          .optional()
+          .describe("list = catalog; html = extract markup; raw = source JS. Default: list."),
         name: z
           .string()
           .optional()
           .describe(
-            "Template name or partial name to read, e.g. 'card', 'modal', 'player', 'settings'. Omit to list all templates."
+            "Template name or partial name, e.g. 'card', 'modal', 'player', 'settings'. Required for mode=html/raw."
           ),
       },
     },
-    async ({ name }) => {
-      const templatesDir = "src/templates";
-      if (!(await fileExists(config.fs, templatesDir))) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: "src/templates/ directory not found in the repository.",
-            },
-          ],
-        };
-      }
-
-      const allFiles = await listFilesRecursive(config.fs, templatesDir, [".js"]);
-
-      if (!name) {
-        const grouped: Record<string, string[]> = {};
-        for (const rel of allFiles) {
-          const parts = rel.split("/");
-          const group = parts.length > 2 ? parts[2] : "root";
-          if (!grouped[group]) grouped[group] = [];
-          grouped[group].push(rel);
-        }
-
-        const lines = Object.entries(grouped)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([group, files]) => `### ${group}\n${files.map((f) => `- ${f}`).join("\n")}`)
-          .join("\n\n");
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `# Lampa UI Templates (${allFiles.length} files)\n\n${lines}\n\nUse the \`name\` parameter to read a specific template.`,
-            },
-          ],
-        };
-      }
-
-      const lower = name.toLowerCase();
-      const matches = allFiles.filter((f) => basename(f).toLowerCase().includes(lower));
-
-      if (matches.length === 0) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `No template matching "${name}" in src/templates/.\nUse list_templates (no name) to see all available templates.`,
-            },
-          ],
-        };
-      }
-
-      const results = [];
-      for (const file of matches.slice(0, 4)) {
-        const content = (await readFileSafe(config.fs, file)) ?? "";
-        const preview =
-          content.length > 2500 ? content.slice(0, 2500) + "\n// …(truncated)" : content;
-        results.push(`## ${file}\n\`\`\`javascript\n${preview}\n\`\`\``);
-      }
-
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: results.join("\n\n"),
-          },
-        ],
-      };
+    async ({ mode = "list", name }) => {
+      const text = await formatTemplates(config.fs, mode, name);
+      return { content: [{ type: "text" as const, text }] };
     }
   );
 
-  // ── generate_plugin_boilerplate ────────────────────────────────────────────
+  // ── generate_plugin_boilerplate (redirect) ─────────────────────────────────
   server.registerTool(
     "generate_plugin_boilerplate",
     {
       description:
-        "Generate a ready-to-use Lampa plugin boilerplate based on real patterns from existing plugins. Select the features you need and get working code instantly.",
+        "Deprecated: use scaffold_plugin_integration instead. Thin redirect to the preferred scaffold tool.",
       inputSchema: {
         plugin_name: z.string().describe("Plugin folder/id in snake_case, e.g. 'my_plugin'."),
         display_name: z
           .string()
-          .describe("Human-readable name shown in the Lampa UI, e.g. 'My Plugin'."),
-        features: z
-          .array(
-            z.enum([
-              "settings",
-              "full_card_hook",
-              "player_hook",
-              "catalog_hook",
-              "storage",
-              "lang_keys",
-              "iptv",
-            ])
-          )
           .optional()
-          .describe(
-            "Features to include. Defaults to [settings, full_card_hook]. Options: settings | full_card_hook | player_hook | catalog_hook | storage | lang_keys | iptv."
-          ),
+          .describe("Human-readable name (ignored — use scaffold_plugin_integration)."),
+        features: z
+          .array(z.string())
+          .optional()
+          .describe("Ignored — use scaffold_plugin_integration."),
       },
     },
-    async ({ plugin_name, display_name, features = ["settings", "full_card_hook"] }) => {
-      const L: string[] = [];
-
-      L.push(
-        `// plugins/${plugin_name}/main.js`,
-        `// Lampa plugin — generated boilerplate`,
-        `(function () {`,
-        `    'use strict';`,
-        ``
-      );
-
-      if (features.includes("lang_keys")) {
-        L.push(
-          `    // ── Translations ─────────────────────────────────────────────────────────`,
-          `    var LANG = {`,
-          `        ru: {`,
-          `            ${plugin_name}_title:    '${display_name}',`,
-          `            ${plugin_name}_settings: 'Настройки ${display_name}',`,
-          `            ${plugin_name}_enabled:  'Включено',`,
-          `        },`,
-          `        en: {`,
-          `            ${plugin_name}_title:    '${display_name}',`,
-          `            ${plugin_name}_settings: '${display_name} settings',`,
-          `            ${plugin_name}_enabled:  'Enabled',`,
-          `        },`,
-          `    };`,
-          ``
-        );
-      }
-
-      L.push(
-        `    // ── State ─────────────────────────────────────────────────────────────────`,
-        `    var initialized = false;`,
-        ``
-      );
-
-      if (features.includes("settings")) {
-        L.push(
-          `    // ── Settings component ────────────────────────────────────────────────────`,
-          `    function SettingsComponent() {`,
-          `        var html = Lampa.Template.get('${plugin_name}_settings', {});`,
-          ``,
-          `        this.create = function () { return html; };`,
-          `        this.destroy = function () { html.remove(); };`,
-          `    }`,
-          ``
-        );
-      }
-
-      L.push(
-        `    // ── Init ──────────────────────────────────────────────────────────────────`,
-        `    function init() {`,
-        `        if (initialized) return;`,
-        `        initialized = true;`,
-        ``
-      );
-
-      if (features.includes("lang_keys")) {
-        L.push(
-          `        // Register translations for all languages`,
-          `        Object.keys(LANG).forEach(function (code) {`,
-          `            Lampa.Lang.add(code, LANG[code]);`,
-          `        });`,
-          ``
-        );
-      }
-
-      if (features.includes("settings")) {
-        L.push(
-          `        // Register settings section`,
-          `        Lampa.Settings.add('${plugin_name}', {`,
-          `            component: '${plugin_name}',`,
-          `            name: '${display_name}',`,
-          `            icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'`,
-          `        });`,
-          ``
-        );
-      }
-
-      if (features.includes("full_card_hook")) {
-        L.push(
-          `        // Hook: full card view (movie/show detail page)`,
-          `        Lampa.Listener.follow('full', function (e) {`,
-          `            if (e.type !== 'complite') return;`,
-          ``,
-          `            // e.object.movie  — TMDB movie/show object`,
-          `            // e.object.activity — current Activity`,
-          `            var movie = e.object.movie;`,
-          `            var isEnabled = Lampa.Storage.get('${plugin_name}_enabled', false);`,
-          `            if (!isEnabled) return;`,
-          ``,
-          `            // Example: append a button to the full card`,
-          `            // var btn = $('<div class="full__button selector">${display_name}</div>');`,
-          `            // btn.on('hover:enter', function () { /* action */ });`,
-          `            // e.object.activity.view.find('.full__buttons').append(btn);`,
-          `        });`,
-          ``
-        );
-      }
-
-      if (features.includes("player_hook")) {
-        L.push(
-          `        // Hook: video player lifecycle`,
-          `        Lampa.Listener.follow('player', function (e) {`,
-          `            if (e.type === 'start') {`,
-          `                // Player started, e.object — player instance`,
-          `            } else if (e.type === 'end') {`,
-          `                // Playback ended`,
-          `            } else if (e.type === 'destroy') {`,
-          `                // Player destroyed — clean up any injected UI`,
-          `            }`,
-          `        });`,
-          ``
-        );
-      }
-
-      if (features.includes("catalog_hook")) {
-        L.push(
-          `        // Hook: catalog / content feed`,
-          `        Lampa.Listener.follow('catalog', function (e) {`,
-          `            if (e.type === 'complite') {`,
-          `                // e.object — catalog component`,
-          `            }`,
-          `        });`,
-          ``
-        );
-      }
-
-      if (features.includes("iptv")) {
-        L.push(
-          `        // Hook: IPTV integration`,
-          `        Lampa.Listener.follow('app', function (e) {`,
-          `            if (e.type !== 'ready') return;`,
-          `            if (!Lampa.PlayerIPTV) return; // IPTV not available`,
-          ``,
-          `            // Lampa.PlayerIPTV — IPTV player instance`,
-          `            // Use Lampa.Storage to persist channel lists:`,
-          `            // Lampa.Storage.get('${plugin_name}_channels', []);`,
-          `        });`,
-          ``
-        );
-      }
-
-      if (features.includes("storage")) {
-        L.push(
-          `        // Storage helpers (example keys — rename as needed)`,
-          `        // Read:   var val = Lampa.Storage.get('${plugin_name}_key', defaultValue);`,
-          `        // Write:  Lampa.Storage.set('${plugin_name}_key', value);`,
-          `        // Watch:  Lampa.Storage.listener.follow('change', fn);`,
-          ``
-        );
-      }
-
-      if (
-        !features.includes("full_card_hook") &&
-        !features.includes("player_hook") &&
-        !features.includes("catalog_hook") &&
-        !features.includes("iptv")
-      ) {
-        L.push(`        // TODO: add your plugin logic here`, ``);
-      }
-
-      L.push(
-        `    }`,
+    async ({ plugin_name, display_name }) => {
+      const desc = display_name ?? plugin_name.replace(/_/g, " ");
+      const text = [
+        `# Use scaffold_plugin_integration`,
         ``,
-        `    // ── Bootstrap ─────────────────────────────────────────────────────────────`,
-        `    // Works whether the plugin loads before or after the app is ready`,
-        `    if (window.appready) init();`,
-        `    else $(document).on('appready', init);`,
+        `\`generate_plugin_boilerplate\` is deprecated to avoid duplicated scaffolds.`,
         ``,
-        `})();`
-      );
-
-      const boilerplate = L.join("\n");
-
-      const nextSteps = [
-        `1. Create folder \`plugins/${plugin_name}/\` in the repo`,
-        `2. Save the code as \`plugins/${plugin_name}/main.js\``,
-        features.includes("settings")
-          ? `3. Add a settings HTML template as \`plugins/${plugin_name}/template.html\` or via Lampa.Template.add()`
-          : null,
-        features.includes("lang_keys")
-          ? `4. Add more keys to the LANG object; use \`find_translation_keys\` to see existing key patterns`
-          : null,
-        `5. Load the plugin by adding its URL in Lampa → Settings → Plugins`,
-        `6. Test with \`run_grep_checks\` after implementing`,
-      ]
-        .filter(Boolean)
-        .join("\n");
-
-      const out = [
-        `# Plugin Boilerplate: **${display_name}** (\`${plugin_name}\`)`,
-        `**Features:** ${features.join(", ")}`,
-        ``,
-        `## plugins/${plugin_name}/main.js`,
-        `\`\`\`javascript`,
-        boilerplate,
+        `Call:`,
+        `\`\`\``,
+        `scaffold_plugin_integration({`,
+        `  plugin_name: "${plugin_name}",`,
+        `  description: "${desc}"`,
+        `})`,
         `\`\`\``,
         ``,
-        `## Next steps`,
-        nextSteps,
-        ``,
-        `> Patterns sourced from: plugins/collections/collections.js, plugins/iptv/iptv.js, plugins/online/online.js`,
+        `That tool returns the preferred main.js + CSS scaffold under plugins/${plugin_name}/.`,
       ].join("\n");
 
-      return { content: [{ type: "text" as const, text: out }] };
+      return { content: [{ type: "text" as const, text }] };
+    }
+  );
+
+  // ── plugin_load_path ───────────────────────────────────────────────────────
+  server.registerTool(
+    "plugin_load_path",
+    {
+      description:
+        "Explain how Lampa discovers, loads, caches, and blacklists plugins. Reads src/core/plugins.js and gulpfile.js plugin-related tasks with line-numbered segments.",
+      inputSchema: {},
+    },
+    async () => {
+      const pluginsFile = "src/core/plugins.js";
+      const gulpFile = "gulpfile.js";
+      const sections: string[] = [`# Plugin load path`, ``];
+
+      if (!(await fileExists(config.fs, pluginsFile))) {
+        sections.push(`\`${pluginsFile}\` not found in the repository.`);
+      } else {
+        const content = (await readFileSafe(config.fs, pluginsFile)) ?? "";
+        const lines = content.split("\n");
+
+        const topicHints: Array<{ title: string; needles: string[] }> = [
+          { title: "Discovery / install", needles: ["install", "push", "add", "url"] },
+          { title: "Load / inject", needles: ["load", "script", "createElement", "append"] },
+          { title: "Cache", needles: ["cache", "Storage", "localStorage"] },
+          { title: "Blacklist", needles: ["black", "block", "ban", "deny"] },
+        ];
+
+        sections.push(`## ${pluginsFile} (${lines.length} lines)`, ``);
+
+        const explained: string[] = [];
+        for (const topic of topicHints) {
+          const hits = await searchCode(config.fs, topic.needles[0], ["*.js"], false, "src/core");
+          const inFile = hits.filter((h) => h.file === pluginsFile).slice(0, 3);
+          if (inFile.length === 0) continue;
+          explained.push(`### ${topic.title}`);
+          for (const h of inFile) {
+            const start = Math.max(1, h.line - 2);
+            const end = Math.min(lines.length, h.line + 6);
+            const seg = await readSegment(config.fs, pluginsFile, start, end);
+            explained.push(`Hit at line ${h.line}: \`${h.text}\``, "```javascript", seg, "```", ``);
+          }
+        }
+
+        // Also surface key function definitions
+        const fnHits = lines
+          .map((l, i) => ({ line: i + 1, text: l }))
+          .filter((l) => /function\s+\w+|exports\.|module\.exports/.test(l.text))
+          .slice(0, 12);
+
+        sections.push(
+          `### Key symbols`,
+          fnHits.map((h) => `- L${h.line}: \`${h.text.trim()}\``).join("\n") || "None found.",
+          ``,
+          explained.length > 0 ? explained.join("\n") : "No discovery/cache/blacklist keywords matched; see key symbols and full file via read_file.",
+          ``,
+          `### Overview (heuristic)`,
+          `- Plugins are typically listed via Settings → Plugins and persisted in Storage.`,
+          `- \`src/core/plugins.js\` injects remote/local plugin scripts at runtime.`,
+          `- Cache / blacklist logic (when present) lives in the same module — see hits above.`,
+          `- Prefer \`plugin_deep_dive\` for analysing an individual plugin folder.`,
+          ``
+        );
+      }
+
+      if (!(await fileExists(config.fs, gulpFile))) {
+        sections.push(`\`${gulpFile}\` not found.`);
+      } else {
+        const gulpContent = (await readFileSafe(config.fs, gulpFile)) ?? "";
+        const gulpLines = gulpContent.split("\n");
+        const pluginTaskLines = gulpLines
+          .map((l, i) => ({ line: i + 1, text: l }))
+          .filter((l) => /plugin/i.test(l.text));
+
+        const taskNames = [
+          ...new Set(
+            pluginTaskLines
+              .map((l) => {
+                const m =
+                  l.text.match(/exports\.(\w*plugin\w*)/i) ||
+                  l.text.match(/function\s+(\w*plugin\w*)/i) ||
+                  l.text.match(/['"](\w*plugin\w*)['"]/i);
+                return m?.[1];
+              })
+              .filter((x): x is string => Boolean(x))
+          ),
+        ];
+
+        sections.push(
+          `## ${gulpFile} — plugin-related tasks`,
+          taskNames.length > 0
+            ? taskNames.map((t) => `- \`${t}\``).join("\n")
+            : "- No task names matched; see line hits below.",
+          ``,
+          `### Matching lines`,
+          pluginTaskLines
+            .slice(0, 40)
+            .map((l) => `${l.line}: ${l.text.trim()}`)
+            .join("\n") || "No plugin mentions in gulpfile.js.",
+          ``
+        );
+
+        // Show a representative segment around the first plugin hit
+        if (pluginTaskLines.length > 0) {
+          const first = pluginTaskLines[0].line;
+          const start = Math.max(1, first - 2);
+          const end = Math.min(gulpLines.length, first + 20);
+          const seg = await readSegment(config.fs, gulpFile, start, end);
+          sections.push(`### Sample segment`, "```javascript", seg, "```");
+        }
+      }
+
+      return { content: [{ type: "text" as const, text: sections.join("\n") }] };
     }
   );
 

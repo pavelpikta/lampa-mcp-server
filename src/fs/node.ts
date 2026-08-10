@@ -99,6 +99,7 @@ export class NodeRepoFs implements RepoFs {
     const candidates = [
       path.join(this.root, "indexes", `${name}.json`),
       path.join(this.root, "..", "indexes", `${name}.json`),
+      path.join(this.root, "..", "snapshot-staging", "indexes", `${name}.json`),
     ];
     for (const abs of candidates) {
       try {
@@ -109,5 +110,40 @@ export class NodeRepoFs implements RepoFs {
       }
     }
     return null;
+  }
+
+  async getSnapshotMeta(): Promise<import("./types.js").SnapshotMeta | null> {
+    const candidates = [
+      path.join(this.root, "..", "snapshot-staging", "manifest.json"),
+      path.join(this.root, "manifest.json"),
+    ];
+    for (const abs of candidates) {
+      try {
+        const text = await readFile(abs, "utf8");
+        const m = JSON.parse(text) as {
+          commit?: string;
+          generatedAt?: string;
+          fileCount?: number;
+          totalBytes?: number;
+          bundled?: boolean;
+          files?: string[];
+        };
+        return {
+          commit: m.commit,
+          generatedAt: m.generatedAt,
+          fileCount: m.fileCount ?? m.files?.length,
+          totalBytes: m.totalBytes,
+          bundled: m.bundled,
+        };
+      } catch {
+        // try next
+      }
+    }
+    const files = await this.listFiles({ exts: [".js", ".ts", ".css", ".json", ".md"] });
+    return {
+      fileCount: files.length,
+      generatedAt: undefined,
+      commit: undefined,
+    };
   }
 }

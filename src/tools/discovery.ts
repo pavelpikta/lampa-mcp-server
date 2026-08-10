@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import { basename } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe, readSegment, fileExists } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
+import { resolveEditPath } from "../utils/lampa.js";
 
 export function registerDiscoveryTools(server: McpServer, config: Config): void {
   // ── repo_overview ──────────────────────────────────────────────────────────
@@ -154,10 +155,14 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
           .optional()
           .describe("File glob patterns to restrict search, e.g. ['*.js','*.ts']."),
         regex: z.boolean().optional().describe("Treat query as a regex. Default false."),
+        prefix: z
+          .string()
+          .optional()
+          .describe("Repo-relative folder to search within, e.g. 'src' or 'plugins'."),
       },
     },
-    async ({ query, globs, regex }) => {
-      const matches = await searchCode(config.fs, query, globs ?? [], regex ?? false);
+    async ({ query, globs, regex, prefix }) => {
+      const matches = await searchCode(config.fs, query, globs ?? [], regex ?? false, prefix);
       if (matches.length === 0) {
         return { content: [{ type: "text" as const, text: `No matches for "${query}".` }] };
       }
@@ -201,6 +206,63 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
       const scripts: Record<string, string> = data.scripts ?? {};
       const lines = Object.entries(scripts).map(([k, v]) => `${k.padEnd(20)} → ${v}`);
       return { content: [{ type: "text" as const, text: lines.join("\n") || "No scripts defined." }] };
+    }
+  );
+
+  // ── snapshot_info ──────────────────────────────────────────────────────────
+  server.registerTool(
+    "snapshot_info",
+    {
+      description:
+        "Show which Lampa source snapshot this MCP is serving (commit, generatedAt, file counts). Call this first on remote Workers.",
+      inputSchema: {},
+    },
+    async () => {
+      const meta = (await config.fs.getSnapshotMeta?.()) ?? null;
+      const body = {
+        label: config.label,
+        commit: meta?.commit ?? null,
+        generatedAt: meta?.generatedAt ?? null,
+        fileCount: meta?.fileCount ?? null,
+        totalBytes: meta?.totalBytes ?? null,
+        bundled: meta?.bundled ?? null,
+      };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(body, null, 2) }],
+      };
+    }
+  );
+
+  // ── resolve_edit_path ──────────────────────────────────────────────────────
+  server.registerTool(
+    "resolve_edit_path",
+    {
+      description:
+        "Return the authoritative edit path for a Lampa change kind (lang, sass, template, component, plugin, core, interaction, settings). Prevents editing public/build copies.",
+      inputSchema: {
+        kind: z
+          .enum(["lang", "sass", "template", "component", "plugin", "core", "interaction", "settings"])
+          .describe("What kind of source you intend to change."),
+        name: z
+          .string()
+          .optional()
+          .describe("Optional name, e.g. plugin id 'tracks' or lang code 'en'."),
+      },
+    },
+    async ({ kind, name }) => {
+      const result = resolveEditPath(kind, name);
+      const text = [
+        `# Edit path: ${kind}${name ? ` (${name})` : ""}`,
+        ``,
+        `## Authoritative`,
+        ...result.authoritative.map((p) => `- ${p}`),
+        ``,
+        `## Avoid`,
+        ...result.avoid.map((p) => `- ${p}`),
+        ``,
+        result.notes,
+      ].join("\n");
+      return { content: [{ type: "text" as const, text }] };
     }
   );
 }

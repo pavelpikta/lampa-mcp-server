@@ -4,8 +4,6 @@ export type AuthProps = {
   login: string;
   name: string;
   email: string;
-  /** GitHub PAT presented by the client (never log this). */
-  accessToken: string;
 };
 
 type Env = {
@@ -46,6 +44,7 @@ code{background:#f4f4f5;padding:2px 6px;border-radius:4px}
 /**
  * Validate a GitHub PAT by calling the GitHub API.
  * Returns auth props on success, otherwise null.
+ * Does not echo or require storing the raw PAT in props.
  */
 export async function resolveGitHubPat(
   token: string,
@@ -85,7 +84,6 @@ export async function resolveGitHubPat(
     login: user.login,
     name: user.name ?? user.login,
     email: user.email ?? "",
-    accessToken: token,
   };
 }
 

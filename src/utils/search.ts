@@ -17,15 +17,17 @@ function globToExts(globs: string[]): string[] {
 /**
  * Pure-JS code search over RepoFs. Returns up to 100 matches.
  * `file` in results is always a repo-relative posix path.
+ * Optional `prefix` scopes the walk (e.g. "src", "plugins").
  */
 export async function searchCode(
   fs: RepoFs,
   query: string,
   globs: string[] = [],
-  isRegex = false
+  isRegex = false,
+  prefix?: string
 ): Promise<SearchMatch[]> {
   const exts = globToExts(globs);
-  const files = await fs.listFiles({ exts });
+  const files = await fs.listFiles({ exts, prefix: prefix || undefined });
   const results: SearchMatch[] = [];
   const pattern = isRegex ? new RegExp(query) : null;
 

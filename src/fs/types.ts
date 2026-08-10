@@ -3,6 +3,15 @@ export interface DirEntry {
   type: "file" | "dir";
 }
 
+export interface SnapshotMeta {
+  commit?: string;
+  generatedAt?: string;
+  fileCount?: number;
+  totalBytes?: number;
+  bundled?: boolean;
+  files?: string[];
+}
+
 export interface RepoFs {
   /** Check if a repo-relative path exists (file or dir). "" or "." means repo root. */
   exists(relPath?: string): Promise<boolean>;
@@ -18,4 +27,6 @@ export interface RepoFs {
   }): Promise<string[]>;
   /** Optional precomputed index JSON under indexes/ */
   readIndex?<T = unknown>(name: string): Promise<T | null>;
+  /** Optional snapshot metadata (R2 manifest or local estimate) */
+  getSnapshotMeta?(): Promise<SnapshotMeta | null>;
 }

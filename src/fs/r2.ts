@@ -5,6 +5,8 @@ export interface R2Manifest {
   files: string[];
   commit?: string;
   generatedAt?: string;
+  fileCount?: number;
+  totalBytes?: number;
   /** When true, file bodies live in bundle.json instead of files/ keys */
   bundled?: boolean;
 }
@@ -29,6 +31,7 @@ const DEFAULT_IGNORE = ["node_modules", ".git", "dist", "build"];
 export class R2RepoFs implements RepoFs {
   private readonly cache = new Map<string, string | null>();
   private manifest: R2Manifest | null = null;
+  private fileSet: Set<string> | null = null;
   private bundle: R2Bundle | null = null;
   private readonly prefix: string;
 
@@ -51,6 +54,7 @@ export class R2RepoFs implements RepoFs {
     const cached = this.cache.get(cacheKey);
     if (cached !== undefined) {
       this.manifest = cached ? (JSON.parse(cached) as R2Manifest) : { files: [] };
+      this.fileSet = new Set(this.manifest.files);
       return this.manifest;
     }
 
@@ -58,13 +62,20 @@ export class R2RepoFs implements RepoFs {
     if (!obj) {
       this.cache.set(cacheKey, null);
       this.manifest = { files: [] };
+      this.fileSet = new Set();
       return this.manifest;
     }
 
     const text = await obj.text();
     this.cache.set(cacheKey, text);
     this.manifest = JSON.parse(text) as R2Manifest;
+    this.fileSet = new Set(this.manifest.files);
     return this.manifest;
+  }
+
+  private async ensureFileSet(): Promise<Set<string>> {
+    await this.loadManifest();
+    return this.fileSet ?? new Set();
   }
 
   private async loadBundle(): Promise<R2Bundle | null> {
@@ -101,10 +112,13 @@ export class R2RepoFs implements RepoFs {
     const rel = normalizeRel(relPath);
     if (!rel) return true;
 
-    const manifest = await this.loadManifest();
-    if (manifest.files.includes(rel)) return true;
+    const fileSet = await this.ensureFileSet();
+    if (fileSet.has(rel)) return true;
     const dirPrefix = `${rel}/`;
-    return manifest.files.some((f) => f.startsWith(dirPrefix));
+    for (const f of fileSet) {
+      if (f.startsWith(dirPrefix)) return true;
+    }
+    return false;
   }
 
   async readFile(relPath: string): Promise<string | null> {
@@ -201,5 +215,17 @@ export class R2RepoFs implements RepoFs {
     const text = await obj.text();
     this.cache.set(cacheKey, text);
     return JSON.parse(text) as T;
+  }
+
+  async getSnapshotMeta(): Promise<import("./types.js").SnapshotMeta | null> {
+    const manifest = await this.loadManifest();
+    return {
+      commit: manifest.commit,
+      generatedAt: manifest.generatedAt,
+      fileCount: manifest.fileCount ?? manifest.files.length,
+      totalBytes: manifest.totalBytes,
+      bundled: manifest.bundled,
+      files: undefined,
+    };
   }
 }

@@ -74,7 +74,7 @@ export function registerValidationTools(server: McpServer, config: Config): void
             (sample.length > 0
               ? sample.map((k) => `- \`${k}\``).join("\n") +
                 (missing.length > 30
-                  ? `\n… and ${missing.length - 30} more. Use translation_coverage for full report.`
+                  ? `\n… and ${missing.length - 30} more. Use i18n_check mode=coverage for full report.`
                   : "")
               : "All Lang.translate() keys found in en.js.")
         );

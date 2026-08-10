@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="ru">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111317">
+  <meta name="google-site-verification" content="U6K4RW05-T2w3Ut3mkGgZHDLefuzSxi2FljkJz2EKY0">
+  <meta name="description"
+    content="JacRed - открытый поиск торрентов по базе JacRed с API, magnet-ссылками, фильтрами, статистикой трекеров и совместимостью с Jackett-подходом.">
+  <meta name="keywords" content="JacRed, Jackett, поиск торрентов, torrent API, magnet, rutracker, rutor, kinozal">
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="https://jacred.su/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="JacRed - открытый поиск торрентов">
+  <meta property="og:description"
+    content="Поиск торрентов, magnet-ссылки, фильтры, статистика трекеров и открытый API поверх JacRed.">
+  <meta property="og:url" content="https://jacred.su/">
+  <meta property="og:image" content="https://jacred.su/jacred-assets/img/jacred-social-preview.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <title>JacRed - открытый поиск торрентов и API</title>
+  <link rel="icon" href="/jacred-assets/img/jacred.png">
+  <link rel="stylesheet" href="/static/styles.css?v=1786051231-18346">
+  <script src="/config.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js" defer></script>
+  <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "JacRed",
+        "url": "https://jacred.su/",
+        "applicationCategory": "SearchApplication",
+        "operatingSystem": "Any",
+        "description": "Открытый поиск торрентов и API поверх JacRed."
+      }
+    </script>
+  <script src="/static/app.js?v=1786051231-21368" type="module"></script>
+</head>
+
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="JacRed">
+      <img src="/jacred-assets/img/jacred.png" alt="">
+      <span>JacRed</span>
+    </a>
+    <nav class="nav">
+      <a href="#search">Поиск</a>
+      <a href="#stats">Статистика</a>
+      <a href="#api-docs">API</a>
+      <a href="https://t.me/jacredsu" target="_blank" rel="noreferrer">Telegram</a>
+    </nav>
+    <div class="account">
+      <button class="button compact lampa-connect" id="openLampaDialog" type="button" aria-label="Подключить Lampa"
+        title="Подключить Lampa">
+        <i data-lucide="plug"></i>
+        <span>Подключить Lampa</span>
+      </button>
+      <span class="status-dot" id="jacredStatus" title="Проверка JacRed"></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="status-panel" aria-live="polite">
+      <div class="status-copy">
+        <p class="eyebrow">Live status</p>
+        <h1>JacRed живет здесь</h1>
+      </div>
+      <div class="metric-grid">
+        <article class="metric-card">
+          <span>JacRed</span>
+          <strong id="metricJacred">Проверка</strong>
+          <small id="metricLatency">-</small>
+        </article>
+        <article class="metric-card">
+          <span>Торрентов</span>
+          <strong id="metricTorrents">-</strong>
+          <small id="metricTrackers">трекеры: -</small>
+        </article>
+        <article class="metric-card">
+          <span>Новых</span>
+          <strong id="metricNew">-</strong>
+          <small>за сегодня</small>
+        </article>
+        <article class="metric-card">
+          <span>Запросов</span>
+          <strong id="metricRequests">-</strong>
+          <small id="metricRequestSources">сегодня: -</small>
+        </article>
+        <article class="metric-card">
+          <span>Свежая раздача</span>
+          <strong id="metricUpdated">-</strong>
+          <small id="metricUptime">uptime: -</small>
+        </article>
+      </div>
+    </section>
+
+    <section id="search" class="search-workspace">
+      <form id="searchForm" class="search-form" autocomplete="off">
+        <div class="search-line">
+          <label class="search-box">
+            <i data-lucide="search"></i>
+            <input id="queryInput" name="query" type="search" placeholder="Название, IMDb/KP, сериал или фильм"
+              minlength="2" required>
+          </label>
+          <button class="button primary" type="submit">
+            <i data-lucide="sparkles"></i>
+            Найти
+          </button>
+        </div>
+
+        <div class="filters">
+          <label>
+            <span>Уточнить</span>
+            <input name="include" placeholder="WEB-DL, 1080p, США">
+          </label>
+          <label>
+            <span>Исключить</span>
+            <input name="exclude" placeholder="HEVC, CAMRip">
+          </label>
+          <label>
+            <span>Категория</span>
+            <select name="category" data-facet="categories">
+              <option value="">Любая</option>
+            </select>
+          </label>
+          <label>
+            <span>Трекер</span>
+            <select name="tracker" data-facet="trackers">
+              <option value="">Любой</option>
+            </select>
+          </label>
+          <label>
+            <span>Качество</span>
+            <select name="quality" data-facet="qualities">
+              <option value="">Любое</option>
+            </select>
+          </label>
+          <label>
+            <span>Тип видео</span>
+            <select name="videotype" data-facet="video_types">
+              <option value="">Любой</option>
+            </select>
+          </label>
+          <label>
+            <span>Озвучка</span>
+            <select name="voice" data-facet="voices">
+              <option value="">Любая</option>
+            </select>
+          </label>
+          <label>
+            <span>Год</span>
+            <select name="year" data-facet="years">
+              <option value="">Любой</option>
+            </select>
+          </label>
+          <label>
+            <span>Сезон</span>
+            <select name="season" data-facet="seasons">
+              <option value="">Любой</option>
+            </select>
+          </label>
+          <div class="filter-actions">
+            <label class="checkline">
+              <input name="exact" type="checkbox">
+              <span>Точный поиск</span>
+            </label>
+            <select name="sort" aria-label="Сортировка">
+              <option value="sid">По сидам</option>
+              <option value="size">По размеру</option>
+              <option value="create">По дате</option>
+              <option value="availability">По доступности</option>
+            </select>
+            <button class="button ghost" id="resetFilters" type="button">Сбросить</button>
+          </div>
+        </div>
+      </form>
+
+      <div class="summary-row">
+        <div>
+          <strong id="resultCount">Готов к поиску</strong>
+          <span id="resultMeta">Открытый поиск. Magnet и ссылка на источник доступны сразу.</span>
+        </div>
+        <button class="button ghost" id="repeatSearch" type="button" disabled>
+          <i data-lucide="refresh-cw"></i>
+          Обновить
+        </button>
+      </div>
+
+      <div id="alert" class="alert" hidden></div>
+      <div id="results" class="results" aria-live="polite"></div>
+    </section>
+
+    <section id="stats" class="stats-section">
+      <div class="docs-head">
+        <div>
+          <p class="eyebrow">Статистика</p>
+          <h1>Трекеры и наполнение базы</h1>
+        </div>
+      </div>
+      <div class="chart-wrap" aria-label="Торренты по трекерам">
+        <div id="trackerChart" class="tracker-chart"></div>
+      </div>
+      <div id="trackerStats" class="tracker-stats"></div>
+    </section>
+
+    <section id="api-docs" class="docs">
+      <div class="docs-head">
+        <div>
+          <p class="eyebrow">Документация</p>
+          <h1>API поиска JacRed</h1>
+          <p class="docs-lead">Рабочий маршрут — <code>GET https://api.jacred.su/api/search</code>. Префикса
+            <code>/api/v1/</code> у публичного поиска нет.
+          </p>
+        </div>
+        <button class="button" id="copyDocsBase" type="button">
+          <i data-lucide="copy"></i>
+          Скопировать endpoint
+        </button>
+      </div>
+
+      <div class="doc-grid">
+        <article class="doc-card wide">
+          <h2>Быстрый старт</h2>
+          <p>Минимальный запрос ищет по базе JacRed и возвращает результаты, magnet-ссылки, ссылки на источник и фасеты
+            для автозаполняемых фильтров.</p>
+          <pre><code id="publicExample">GET https://api.jacred.su/api/search?query=Castlevania&amp;sort=sid</code></pre>
+        </article>
+
+        <article class="doc-card">
+          <h2>Примеры</h2>
+          <pre><code>GET https://api.jacred.su/api/search?query=кастлвания&amp;quality=1080
+GET https://api.jacred.su/api/search?query=matrix&amp;exclude=camrip,ts
+GET https://api.jacred.su/api/search?query=one%20piece&amp;tracker=rutracker
+GET https://api.jacred.su/api/search?query=lost&amp;sort=availability</code></pre>
+        </article>
+
+        <article class="doc-card">
+          <h2>Сортировка</h2>
+          <p>Параметр `sort` управляет порядком выдачи. По умолчанию используется `sid`.</p>
+          <pre><code>sid          больше сидов
+pir          больше пиров
+size         больше размер
+create       свежее публикация
+update       свежее обновление
+availability выше доля сидов</code></pre>
+        </article>
+
+        <article class="doc-card wide">
+          <h2>Параметры запроса</h2>
+          <div class="param-table">
+            <span>query</span>
+            <p>Строка поиска. Минимум 2 символа.</p>
+            <span>include</span>
+            <p>Слова, которые должны быть в названии или метаданных. Можно через запятую.</p>
+            <span>exclude</span>
+            <p>Слова, которые надо исключить: `camrip`, `hevc`, `ts` и т.п.</p>
+            <span>category</span>
+            <p>Тип из `facets.categories`: anime, movie, serial, multserial...</p>
+            <span>tracker</span>
+            <p>Трекер из `facets.trackers`: rutracker, rutor, kinozal...</p>
+            <span>quality</span>
+            <p>Число качества: 480, 720, 1080, 2160.</p>
+            <span>voice</span>
+            <p>Озвучка из `facets.voices`.</p>
+            <span>year</span>
+            <p>Год релиза.</p>
+            <span>season</span>
+            <p>Номер сезона.</p>
+            <span>exact</span>
+            <p>`true` включает точный поиск JacRed.</p>
+            <span>limit</span>
+            <p>Сколько результатов вернуть. Ограничивается `JACRED_PUBLIC_LIMIT_MAX`.</p>
+          </div>
+        </article>
+
+        <article class="doc-card">
+          <h2>Поля результата</h2>
+          <pre><code>{
+  "title": "...",
+  "tracker": "rutracker",
+  "size_name": "11.81 GB",
+  "seeders": 56,
+  "peers": 8,
+  "availability_score": 0.875,
+  "magnet": "magnet:?xt=...",
+  "source_url": "https://..."
+}</code></pre>
+        </article>
+
+        <article class="doc-card">
+          <h2>Фасеты</h2>
+          <p>`facets` нужны для интерфейса фильтров. Они строятся по загруженной выборке до применения UI-фильтров.</p>
+          <pre><code>{
+  "facets": {
+    "trackers": [],
+    "qualities": [],
+    "years": [],
+    "voices": [],
+    "seasons": [],
+    "categories": []
+  }
+}</code></pre>
+        </article>
+
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      <a href="https://github.com/jacred-fdb/jacred" target="_blank" rel="noreferrer">
+        <i data-lucide="github"></i>
+        JacRed
+      </a>
+      <span></span>
+      <a href="https://t.me/deathNoragami" target="_blank" rel="noreferrer">
+        <i data-lucide="send"></i>
+        сайт: deathNoragami
+      </a>
+      <span></span>
+      <a href="https://t.me/jacredsu" target="_blank" rel="noreferrer">
+        <i data-lucide="messages-circle"></i>
+        канал JacRed
+      </a>
+    </footer>
+  </main>
+
+  <dialog class="modal lampa-modal" id="lampaDialog">
+    <div class="modal-body">
+      <div class="modal-head">
+        <h2>Подключить Lampa</h2>
+        <button class="icon-button" id="closeLampaDialog" type="button" aria-label="Закрыть">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div class="lampa-content">
+        <p>В Lampa откройте настройки парсера Jackett и добавьте адрес JacRed.</p>
+        <div class="copy-stack">
+          <div class="copy-field">
+            <div class="copy-value">
+              <span>С протоколом</span>
+              <code>https://jacred.su</code>
+            </div>
+            <button class="button compact copy-lampa-url" type="button" data-copy="https://jacred.su">
+              <i data-lucide="copy"></i>
+              Скопировать
+            </button>
+          </div>
+          <div class="copy-field">
+            <div class="copy-value">
+              <span>Без протокола</span>
+              <code>jacred.su</code>
+            </div>
+            <button class="button compact copy-lampa-url" type="button" data-copy="jacred.su">
+              <i data-lucide="copy"></i>
+              Скопировать
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="modal telegram-modal" id="telegramDialog" aria-labelledby="telegramDialogTitle">
+    <div class="modal-body telegram-modal-body">
+      <div class="modal-head">
+        <div class="telegram-title">
+          <span class="telegram-mark" aria-hidden="true"><i data-lucide="send"></i></span>
+          <div>
+            <p class="eyebrow">JacRed в Telegram</p>
+            <h2 id="telegramDialogTitle">Будьте в курсе работы сайта</h2>
+          </div>
+        </div>
+        <button class="icon-button" id="closeTelegramDialog" type="button" aria-label="Закрыть">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <p class="telegram-copy">Подпишитесь на канал: там обсуждаем проблемы и улучшения, публикуем новости, статусы
+        работ и сообщения об исправлениях JacRed.</p>
+      <div class="modal-actions telegram-actions">
+        <a class="button primary" id="subscribeTelegram" href="https://t.me/jacredsu" target="_blank" rel="noreferrer">
+          <i data-lucide="send"></i>
+          Подписаться
+        </a>
+        <button class="button ghost" id="dismissTelegramDialog" type="button">Не сейчас</button>
+      </div>
+    </div>
+  </dialog>
+
+</body>
+
+</html>

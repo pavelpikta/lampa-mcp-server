@@ -13,21 +13,17 @@ Runs in two modes:
 
 ## What it does
 
-The server exposes **56+ tools** and **6 resources** across nine capability layers:
+The server exposes discovery, analysis, planning, editing, validation, and Lampa/CUB specialty tools, plus curated resources (`lampa://landmarks`, `lampa://edit-rules`, `lampa://api-surface`).
 
-| Layer | File | Tools | Purpose |
-|---|---|---|---|
-| Discovery | `discovery.ts` | 6 | Navigate repo structure, list modules, search code, read files |
-| Analysis | `analysis.ts` | 7 | Locate settings, API calls, UI components, translations, dependency maps |
-| Planning | `planning.ts` | 4 | Generate change plans, impact analysis, edit targets, risk scans |
-| Editing | `editing.ts` | 4 | Draft patches, scaffold plugins, generate hook/setting boilerplate |
-| Validation | `validation.ts` | 4 | Quality checks, find tests, resolve build commands, query docs |
-| Lampa Deep | `lampa_deep.ts` | 8 | Deep Lampa-specific analysis: providers, events, translations, lifecycle |
-| Advanced | `advanced.ts` | 8 | File reads, storage schema, event bus map, network map, pattern guide |
-| Lampa Modern | `lampa_modern.ts` | 9 | Maker modules, WebSocket, components, settings, packaging |
-| CUB API | `cub.ts` | 6 | Full CUB API surface from Lampa source: catalog, auth, sync, data models |
+Preferred agent loop:
 
-Remote mode also registers `whoami` (authenticated GitHub user).
+```
+snapshot_info → landmarks / plugin_deep_dive
+  → search_code (use prefix) | maker_module_map | cub_api_catalog
+  → plan_change → draft_patch → validate_plugin | i18n_check
+```
+
+Use `resolve_edit_path` before editing so you change `src/` / `plugins/` rather than `public/` or `build/`.
 
 ---
 
