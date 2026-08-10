@@ -7,10 +7,10 @@
     "lampa-mcp-server": "dist/index.js"
   },
   "scripts": {
-    "build": "node_modules/.bin/tsc",
+    "build": "npm run types:worker && tsc",
     "dev": "node --loader ts-node/esm src/index.ts",
     "start": "node dist/index.js",
-    "typecheck": "node_modules/.bin/tsc --noEmit",
+    "typecheck": "npm run types:worker && tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src scripts",
@@ -31,15 +31,22 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.6",
     "ts-node": "^10.9.2",
-    "typescript": "^7.0.2",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
     "typescript-eslint": "^8.66.0",
     "wrangler": "^4.120.0"
   },
   "engines": {
     "node": ">=20"
+  },
+  "allowScripts": {
+    "core-js-pure@3.50.0": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.28.1": true,
+    "workerd@1.20260801.1": true
   }
 }

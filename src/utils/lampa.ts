@@ -38,11 +38,7 @@ export const LAMPA_FEATURE_MAP: Record<string, string[]> = {
     "src/components/bookmarks.js",
     "src/components/favorite.js",
   ],
-  torrents: [
-    "src/components/torrents.js",
-    "src/components/mytorrents.js",
-    "plugins/dlna",
-  ],
+  torrents: ["src/components/torrents.js", "src/components/mytorrents.js", "plugins/dlna"],
   iptv: ["plugins/iptv", "src/interaction/player/iptv.js"],
   episodes: ["src/components/episodes.js", "spec/episodes_parser.spec.js"],
   seasons: ["src/components", "spec/seasons_parser.spec.js"],
@@ -213,14 +209,7 @@ export const LAMPA_API_SURFACE_KEYS = [
 ];
 
 export type EditPathKind =
-  | "lang"
-  | "sass"
-  | "template"
-  | "component"
-  | "plugin"
-  | "core"
-  | "interaction"
-  | "settings";
+  "lang" | "sass" | "template" | "component" | "plugin" | "core" | "interaction" | "settings";
 
 export function resolveEditPath(
   kind: EditPathKind,
@@ -229,7 +218,9 @@ export function resolveEditPath(
   switch (kind) {
     case "lang":
       return {
-        authoritative: name ? [`src/lang/${name}.js`, "src/lang/meta.js"] : ["src/lang/", "src/lang/meta.js"],
+        authoritative: name
+          ? [`src/lang/${name}.js`, "src/lang/meta.js"]
+          : ["src/lang/", "src/lang/meta.js"],
         avoid: ["public/lang/", "build/"],
         notes: "Edit src/lang only. public/lang is a gulp copy.",
       };

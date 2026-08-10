@@ -102,8 +102,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
   server.registerTool(
     "list_modules",
     {
-      description:
-        "List all JavaScript/TypeScript modules in a given subfolder of the Lampa repo.",
+      description: "List all JavaScript/TypeScript modules in a given subfolder of the Lampa repo.",
       inputSchema: {
         subfolder: z
           .string()
@@ -117,7 +116,9 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
         return { content: [{ type: "text" as const, text: `Folder not found: ${subfolder}` }] };
       }
       const files = await listFilesRecursive(config.fs, base, [".js", ".ts"]);
-      return { content: [{ type: "text" as const, text: files.join("\n") || "No modules found." }] };
+      return {
+        content: [{ type: "text" as const, text: files.join("\n") || "No modules found." }],
+      };
     }
   );
 
@@ -137,7 +138,9 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
       const lower = pattern.toLowerCase();
       const matches = all.filter((f) => basename(f).toLowerCase().includes(lower));
       return {
-        content: [{ type: "text" as const, text: matches.join("\n") || `No files matching "${pattern}".` }],
+        content: [
+          { type: "text" as const, text: matches.join("\n") || `No files matching "${pattern}".` },
+        ],
       };
     }
   );
@@ -205,7 +208,9 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
       const data = JSON.parse(pkg) as { scripts?: Record<string, string> };
       const scripts: Record<string, string> = data.scripts ?? {};
       const lines = Object.entries(scripts).map(([k, v]) => `${k.padEnd(20)} → ${v}`);
-      return { content: [{ type: "text" as const, text: lines.join("\n") || "No scripts defined." }] };
+      return {
+        content: [{ type: "text" as const, text: lines.join("\n") || "No scripts defined." }],
+      };
     }
   );
 
@@ -241,7 +246,16 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
         "Return the authoritative edit path for a Lampa change kind (lang, sass, template, component, plugin, core, interaction, settings). Prevents editing public/build copies.",
       inputSchema: {
         kind: z
-          .enum(["lang", "sass", "template", "component", "plugin", "core", "interaction", "settings"])
+          .enum([
+            "lang",
+            "sass",
+            "template",
+            "component",
+            "plugin",
+            "core",
+            "interaction",
+            "settings",
+          ])
           .describe("What kind of source you intend to change."),
         name: z
           .string()

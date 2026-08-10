@@ -42,11 +42,7 @@ async function buildImpactSection(fs: RepoFs, files: string[]): Promise<string> 
 
     const risks = await detectRisks(fs, [file]);
     const level =
-      reverseRefs.length > 10
-        ? "🔴 HIGH"
-        : reverseRefs.length > 3
-          ? "🟡 MEDIUM"
-          : "🟢 LOW";
+      reverseRefs.length > 10 ? "🔴 HIGH" : reverseRefs.length > 3 ? "🟡 MEDIUM" : "🟢 LOW";
 
     sections.push(
       `### ${file} — ${level}`,
@@ -60,7 +56,9 @@ async function buildImpactSection(fs: RepoFs, files: string[]): Promise<string> 
   }
 
   if (sections.length === 1) {
-    sections.push("No existing target files to analyse. Infer targets first, then run `module_dependency_map`.");
+    sections.push(
+      "No existing target files to analyse. Infer targets first, then run `module_dependency_map`."
+    );
   }
 
   return sections.join("\n");
@@ -147,19 +145,11 @@ export function registerPlanningTools(server: McpServer, config: Config): void {
       .describe(
         "Plain-language description of the change, e.g. 'add a sleep timer to the player'."
       ),
-    scope_hint: z
-      .string()
-      .optional()
-      .describe("Optional hint for which feature area is involved."),
+    scope_hint: z.string().optional().describe("Optional hint for which feature area is involved."),
   };
 
-  const planHandler = async ({
-    request,
-    scope_hint,
-  }: {
-    request: string;
-    scope_hint?: string;
-  }) => runPlanFeatureChange(config, request, scope_hint);
+  const planHandler = async ({ request, scope_hint }: { request: string; scope_hint?: string }) =>
+    runPlanFeatureChange(config, request, scope_hint);
 
   // ── plan_feature_change / plan_change ──────────────────────────────────────
   server.registerTool(

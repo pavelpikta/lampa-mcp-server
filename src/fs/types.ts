@@ -20,11 +20,7 @@ export interface RepoFs {
   /** List direct children of a directory */
   listDir(relPath?: string): Promise<DirEntry[]>;
   /** Recursively list files as repo-relative posix paths */
-  listFiles(options?: {
-    prefix?: string;
-    exts?: string[];
-    ignore?: string[];
-  }): Promise<string[]>;
+  listFiles(options?: { prefix?: string; exts?: string[]; ignore?: string[] }): Promise<string[]>;
   /** Optional precomputed index JSON under indexes/ */
   readIndex?<T = unknown>(name: string): Promise<T | null>;
   /** Optional snapshot metadata (R2 manifest or local estimate) */

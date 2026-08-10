@@ -188,9 +188,7 @@ export function registerCubTools(server: McpServer, config: Config): void {
         };
       }
       return {
-        content: [
-          { type: "text" as const, text: await formatEndpointDetail(ep, config.fs) },
-        ],
+        content: [{ type: "text" as const, text: await formatEndpointDetail(ep, config.fs) }],
       };
     }
   );

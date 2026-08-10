@@ -63,11 +63,11 @@ export async function resolveGitHubPat(
 
   if (!res.ok) return null;
 
-  const user = (await res.json()) as {
+  const user: {
     login?: string;
     name?: string | null;
     email?: string | null;
-  };
+  } = await res.json();
 
   if (!user.login) return null;
 

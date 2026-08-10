@@ -1,4 +1,4 @@
-import type { DirEntry, RepoFs } from "./types.js";
+import type { DirEntry, RepoFs, SnapshotMeta } from "./types.js";
 import { normalizeRel } from "./paths.js";
 
 export interface R2Manifest {
@@ -217,7 +217,7 @@ export class R2RepoFs implements RepoFs {
     return JSON.parse(text) as T;
   }
 
-  async getSnapshotMeta(): Promise<import("./types.js").SnapshotMeta | null> {
+  async getSnapshotMeta(): Promise<SnapshotMeta | null> {
     const manifest = await this.loadManifest();
     return {
       commit: manifest.commit,

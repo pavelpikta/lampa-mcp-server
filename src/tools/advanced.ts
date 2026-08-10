@@ -911,9 +911,7 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
       }
 
       const hits = (await searchCode(config.fs, meta.searchFor, ["*.js"], false))
-        .filter(
-          (m) => m.file === meta.searchIn || m.file.startsWith(`${meta.searchIn}/`)
-        )
+        .filter((m) => m.file === meta.searchIn || m.file.startsWith(`${meta.searchIn}/`))
         .slice(0, 10);
 
       const examples: string[] = [];

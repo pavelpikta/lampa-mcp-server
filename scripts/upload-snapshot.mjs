@@ -9,13 +9,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-} from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -170,11 +164,11 @@ const eventHits = [
   ),
 ];
 const settingsHits = [
-  ...extractRegexIndex(
-    files,
-    String.raw`Lampa\.Settings\.add\(\s*['"]([^'"]+)['"]`,
-    (rel, m) => ({ file: rel, component: m[1], api: "Settings.add" })
-  ),
+  ...extractRegexIndex(files, String.raw`Lampa\.Settings\.add\(\s*['"]([^'"]+)['"]`, (rel, m) => ({
+    file: rel,
+    component: m[1],
+    api: "Settings.add",
+  })),
   ...extractRegexIndex(
     files,
     String.raw`SettingsApi\.add(?:Component|Param)\(\s*['"]?([^'")\s]+)`,
@@ -242,7 +236,12 @@ wranglerPut(`${prefix}bundle.json`, stagingBundle);
 for (const [name, data] of Object.entries(indexes)) {
   const p = writeTemp(`indexes/${name}.json`, JSON.stringify(data, null, 2));
   wranglerPut(`${prefix}indexes/${name}.json`, p);
-  const hits = data && typeof data === "object" && "hits" in data ? data.hits.length : Array.isArray(data) ? data.length : "?";
+  const hits =
+    data && typeof data === "object" && "hits" in data
+      ? data.hits.length
+      : Array.isArray(data)
+        ? data.length
+        : "?";
   console.log(`  index ${name}: ${hits}`);
 }
 

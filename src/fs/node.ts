@@ -1,6 +1,6 @@
 import { access, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import type { DirEntry, RepoFs } from "./types.js";
+import type { DirEntry, RepoFs, SnapshotMeta } from "./types.js";
 import { joinRepo, normalizeRel } from "./paths.js";
 
 const DEFAULT_IGNORE = ["node_modules", ".git", "dist", "build"];
@@ -112,7 +112,7 @@ export class NodeRepoFs implements RepoFs {
     return null;
   }
 
-  async getSnapshotMeta(): Promise<import("./types.js").SnapshotMeta | null> {
+  async getSnapshotMeta(): Promise<SnapshotMeta | null> {
     const candidates = [
       path.join(this.root, "..", "snapshot-staging", "manifest.json"),
       path.join(this.root, "manifest.json"),

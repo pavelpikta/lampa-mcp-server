@@ -57,11 +57,7 @@ function findAnchor(content: string): AnchorHit | null {
   return null;
 }
 
-function buildUnifiedDiffSuggestion(
-  file: string,
-  content: string,
-  request: string
-): string {
+function buildUnifiedDiffSuggestion(file: string, content: string, request: string): string {
   const lines = content.split("\n");
   const anchor = findAnchor(content);
   const anchorLine = anchor?.line ?? Math.min(10, Math.max(lines.length, 1));
@@ -78,7 +74,9 @@ function buildUnifiedDiffSuggestion(
     hunkLines.push(` ${text}`);
     if (ln === anchorLine) {
       hunkLines.push(`+// TODO: ${request}`);
-      hunkLines.push(`+// Insert change near ${anchor?.kind ?? "anchor"} (${anchor?.label ?? "start"})`);
+      hunkLines.push(
+        `+// Insert change near ${anchor?.kind ?? "anchor"} (${anchor?.label ?? "start"})`
+      );
     }
   }
 
@@ -292,7 +290,8 @@ export function registerEditingTools(server: McpServer, config: Config): void {
         recommended.join("\n\n"),
         ``,
         `## Live code hits (keyword: "${keyword}")`,
-        liveHits.slice(0, 20).join("\n") || "No matching Listener.follow / Listener.send / Player.listener.follow hits.",
+        liveHits.slice(0, 20).join("\n") ||
+          "No matching Listener.follow / Listener.send / Player.listener.follow hits.",
       ].join("\n");
 
       return { content: [{ type: "text" as const, text }] };

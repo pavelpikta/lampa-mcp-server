@@ -48,9 +48,7 @@ function createServer(env: WorkerEnv) {
     },
     async () => {
       const auth = getMcpAuthContext();
-      const props = auth?.props as
-        | { login?: string; name?: string; email?: string }
-        | undefined;
+      const props = auth?.props as { login?: string; name?: string; email?: string } | undefined;
       if (!props?.login) {
         return {
           content: [{ type: "text" as const, text: "Not authenticated." }],

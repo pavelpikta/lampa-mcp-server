@@ -257,10 +257,7 @@ export async function formatI18nKeys(fs: RepoFs, key?: string): Promise<string> 
       const lines = content.split("\n");
       for (let i = 0; i < lines.length && usages.length < 10; i++) {
         const line = lines[i];
-        if (
-          line.includes(`Lang.translate('${key}'`) ||
-          line.includes(`Lang.translate("${key}"`)
-        ) {
+        if (line.includes(`Lang.translate('${key}'`) || line.includes(`Lang.translate("${key}"`)) {
           usages.push(`${file}:${i + 1}  ${line.trim()}`);
         }
       }
@@ -321,7 +318,10 @@ export async function formatI18nCoverage(fs: RepoFs, showMissing = true): Promis
 
     if (showMissing) {
       if (missingKeys.length > 0) {
-        details.push(`\n### ${lang} — ${missingKeys.length} missing key(s)`, missingKeys.join(", "));
+        details.push(
+          `\n### ${lang} — ${missingKeys.length} missing key(s)`,
+          missingKeys.join(", ")
+        );
       }
       if (extraKeys.length > 0) {
         details.push(
@@ -423,8 +423,7 @@ export async function formatTemplates(
     const meta: string[] = [];
     if (classSet.size > 0)
       meta.push(`**CSS classes (${classSet.size}):** \`${[...classSet].join("`, `")}\``);
-    if (bindingSet.size > 0)
-      meta.push(`**Data bindings:** \`${[...bindingSet].join("`, `")}\``);
+    if (bindingSet.size > 0) meta.push(`**Data bindings:** \`${[...bindingSet].join("`, `")}\``);
     if (dataSet.size > 0) meta.push(`**Data attributes:** \`${[...dataSet].join("`, `")}\``);
 
     results.push(

@@ -506,7 +506,9 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
           `### Key symbols`,
           fnHits.map((h) => `- L${h.line}: \`${h.text.trim()}\``).join("\n") || "None found.",
           ``,
-          explained.length > 0 ? explained.join("\n") : "No discovery/cache/blacklist keywords matched; see key symbols and full file via read_file.",
+          explained.length > 0
+            ? explained.join("\n")
+            : "No discovery/cache/blacklist keywords matched; see key symbols and full file via read_file.",
           ``,
           `### Overview (heuristic)`,
           `- Plugins are typically listed via Settings → Plugins and persisted in Storage.`,

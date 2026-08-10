@@ -60,9 +60,7 @@ export function registerResources(server: McpServer, config: Config): void {
       const docsIndex = joinRepo(config.docsPath, "index.html");
       if (!(await fileExists(config.fs, docsIndex))) {
         return {
-          contents: [
-            { uri: uri.href, text: "Docs not generated. Run `npm run doc` in the repo." },
-          ],
+          contents: [{ uri: uri.href, text: "Docs not generated. Run `npm run doc` in the repo." }],
         };
       }
       const raw = ((await readFileSafe(config.fs, docsIndex)) ?? "")

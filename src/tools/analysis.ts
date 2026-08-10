@@ -47,7 +47,9 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
         provider: z
           .string()
           .optional()
-          .describe("Narrow to a specific provider or plugin, e.g. 'filmix', 'rezka', 'tmdb_proxy'."),
+          .describe(
+            "Narrow to a specific provider or plugin, e.g. 'filmix', 'rezka', 'tmdb_proxy'."
+          ),
       },
     },
     async ({ provider }) => {
