@@ -1,29 +1,32 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import path from "node:path";
 import type { Config } from "../config.js";
+import { basename, joinRepo } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
 import { findMissingLangKeys } from "../utils/lampa_modern.js";
 
 export function registerValidationTools(server: McpServer, config: Config): void {
   // ── run_grep_checks ────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "run_grep_checks",
-    "Run a set of code-quality grep checks across the repo: undefined references, console.log leftovers, TODO markers, missing translations.",
     {
-      checks: z
-        .array(
-          z.enum([
-            "todos",
-            "console_logs",
-            "undefined_refs",
-            "missing_lang_keys",
-            "hardcoded_strings",
-          ])
-        )
-        .optional()
-        .describe("Which checks to run. Defaults to all."),
+      description:
+        "Run a set of code-quality grep checks across the repo: undefined references, console.log leftovers, TODO markers, missing translations.",
+      inputSchema: {
+        checks: z
+          .array(
+            z.enum([
+              "todos",
+              "console_logs",
+              "undefined_refs",
+              "missing_lang_keys",
+              "hardcoded_strings",
+            ])
+          )
+          .optional()
+          .describe("Which checks to run. Defaults to all."),
+      },
     },
     async ({ checks }) => {
       const all = [
@@ -37,14 +40,14 @@ export function registerValidationTools(server: McpServer, config: Config): void
       const results: string[] = [];
 
       if (toRun.includes("todos")) {
-        const hits = searchCode(config.repoPath, "TODO", ["*.js", "*.ts"], false).slice(0, 20);
+        const hits = (await searchCode(config.fs, "TODO", ["*.js", "*.ts"], false)).slice(0, 20);
         results.push(
           `## TODOs (${hits.length})\n${hits.map((h) => `${h.file}:${h.line}  ${h.text}`).join("\n") || "None."}`
         );
       }
 
       if (toRun.includes("console_logs")) {
-        const hits = searchCode(config.repoPath, "console.log", ["*.js", "*.ts"], false).slice(
+        const hits = (await searchCode(config.fs, "console.log", ["*.js", "*.ts"], false)).slice(
           0,
           20
         );
@@ -54,7 +57,7 @@ export function registerValidationTools(server: McpServer, config: Config): void
       }
 
       if (toRun.includes("undefined_refs")) {
-        const hits = searchCode(config.repoPath, "undefined", ["*.js"], false)
+        const hits = (await searchCode(config.fs, "undefined", ["*.js"], false))
           .filter((h) => h.text.includes("=== undefined") || h.text.includes("== undefined"))
           .slice(0, 15);
         results.push(
@@ -63,7 +66,7 @@ export function registerValidationTools(server: McpServer, config: Config): void
       }
 
       if (toRun.includes("missing_lang_keys")) {
-        const { missing, enKeyCount, langDir } = findMissingLangKeys(config.repoPath);
+        const { missing, enKeyCount, langDir } = await findMissingLangKeys(config.fs);
         const sample = missing.slice(0, 30);
         results.push(
           `## Missing translation keys (${missing.length} of ${enKeyCount} en.js keys used in code)\n` +
@@ -78,7 +81,7 @@ export function registerValidationTools(server: McpServer, config: Config): void
       }
 
       if (toRun.includes("hardcoded_strings")) {
-        const hits = searchCode(config.repoPath, 'innerHTML = "', ["*.js"], false).slice(0, 10);
+        const hits = (await searchCode(config.fs, 'innerHTML = "', ["*.js"], false)).slice(0, 10);
         results.push(
           `## Hardcoded innerHTML strings (${hits.length})\n${hits.map((h) => `${h.file}:${h.line}  ${h.text}`).join("\n") || "None."}`
         );
@@ -89,28 +92,28 @@ export function registerValidationTools(server: McpServer, config: Config): void
   );
 
   // ── list_related_tests ─────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "list_related_tests",
-    "Find test/spec files related to a module or feature.",
     {
-      module: z.string().describe("Module name or feature keyword."),
+      description: "Find test/spec files related to a module or feature.",
+      inputSchema: {
+        module: z.string().describe("Module name or feature keyword."),
+      },
     },
     async ({ module: mod }) => {
-      const specDir = path.join(config.repoPath, "spec");
-      const hasSpec = fileExists(specDir);
-      const specFiles = hasSpec ? listFilesRecursive(specDir, [".js", ".ts", ".spec.js"]) : [];
+      const hasSpec = await fileExists(config.fs, "spec");
+      const specFiles = hasSpec
+        ? await listFilesRecursive(config.fs, "spec", [".js", ".ts", ".spec.js"])
+        : [];
 
       const lower = mod.toLowerCase();
-      const direct = specFiles
-        .filter((f) => path.basename(f).toLowerCase().includes(lower))
-        .map((f) => path.relative(config.repoPath, f));
+      const direct = specFiles.filter((f) => basename(f).toLowerCase().includes(lower));
 
-      const byContent = specFiles
-        .filter((f) => {
-          const content = readFileSafe(f) ?? "";
-          return content.toLowerCase().includes(lower);
-        })
-        .map((f) => path.relative(config.repoPath, f));
+      const byContent: string[] = [];
+      for (const f of specFiles) {
+        const content = (await readFileSafe(config.fs, f)) ?? "";
+        if (content.toLowerCase().includes(lower)) byContent.push(f);
+      }
 
       const all = [...new Set([...direct, ...byContent])];
 
@@ -129,15 +132,17 @@ export function registerValidationTools(server: McpServer, config: Config): void
   );
 
   // ── run_build_hint ─────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "run_build_hint",
-    "Return the correct build/dev/test command for the Lampa project based on package.json scripts.",
     {
-      goal: z.enum(["build", "dev", "test", "doc", "lint"]).describe("What you want to do."),
+      description:
+        "Return the correct build/dev/test command for the Lampa project based on package.json scripts.",
+      inputSchema: {
+        goal: z.enum(["build", "dev", "test", "doc", "lint"]).describe("What you want to do."),
+      },
     },
     async ({ goal }) => {
-      const pkgPath = path.join(config.repoPath, "package.json");
-      const pkg = readFileSafe(pkgPath);
+      const pkg = await readFileSafe(config.fs, "package.json");
       if (!pkg) return { content: [{ type: "text", text: "No package.json found." }] };
 
       const data = JSON.parse(pkg) as { scripts?: Record<string, string> };
@@ -156,7 +161,7 @@ export function registerValidationTools(server: McpServer, config: Config): void
         .filter((v): v is string => v !== null);
 
       if (matches.length === 0) {
-        const gulpFile = fileExists(path.join(config.repoPath, "gulpfile.js"));
+        const gulpFile = await fileExists(config.fs, "gulpfile.js");
         if (gulpFile && goal === "build") {
           return {
             content: [
@@ -182,24 +187,22 @@ export function registerValidationTools(server: McpServer, config: Config): void
   );
 
   // ── doc_lookup ─────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "doc_lookup",
-    "Look up a topic in the generated docs (build/doc/index.html) or README.",
     {
-      topic: z.string().describe("Topic to search for, e.g. 'Storage', 'Settings', 'Component'."),
+      description: "Look up a topic in the generated docs (build/doc/index.html) or README.",
+      inputSchema: {
+        topic: z.string().describe("Topic to search for, e.g. 'Storage', 'Settings', 'Component'."),
+      },
     },
     async ({ topic }) => {
-      const sources = [
-        path.join(config.docsPath, "index.html"),
-        path.join(config.repoPath, "README.md"),
-        path.join(config.repoPath, "UPGRADE.md"),
-      ];
+      const sources = [joinRepo(config.docsPath, "index.html"), "README.md", "UPGRADE.md"];
 
       const results: string[] = [];
 
       for (const src of sources) {
-        if (!fileExists(src)) continue;
-        const content = readFileSafe(src) ?? "";
+        if (!(await fileExists(config.fs, src))) continue;
+        const content = (await readFileSafe(config.fs, src)) ?? "";
         const lines = content.split("\n");
         const hits: string[] = [];
         for (let i = 0; i < lines.length; i++) {
@@ -213,7 +216,7 @@ export function registerValidationTools(server: McpServer, config: Config): void
           }
         }
         if (hits.length > 0) {
-          results.push(`### ${path.basename(src)}\n${hits.slice(0, 8).join("\n")}`);
+          results.push(`### ${basename(src)}\n${hits.slice(0, 8).join("\n")}`);
         }
       }
 

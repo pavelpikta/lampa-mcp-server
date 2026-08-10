@@ -1,34 +1,13 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+#!/usr/bin/env node
+/**
+ * Local stdio entrypoint for Cursor / Claude Desktop.
+ * For the remote Cloudflare Worker, see src/worker.ts.
+ */
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { getConfig } from "./config.js";
-import { registerDiscoveryTools } from "./tools/discovery.js";
-import { registerAnalysisTools } from "./tools/analysis.js";
-import { registerPlanningTools } from "./tools/planning.js";
-import { registerEditingTools } from "./tools/editing.js";
-import { registerValidationTools } from "./tools/validation.js";
-import { registerLampaDeepTools } from "./tools/lampa_deep.js";
-import { registerAdvancedTools } from "./tools/advanced.js";
-import { registerLampaModernTools } from "./tools/lampa_modern.js";
-import { registerCubTools } from "./tools/cub.js";
-import { registerResources } from "./resources/index.js";
+import { createLampaServer } from "./server.js";
 
 const config = getConfig();
-
-const server = new McpServer({
-  name: "lampa-mcp-server",
-  version: "1.2.0",
-});
-
-registerDiscoveryTools(server, config);
-registerAnalysisTools(server, config);
-registerPlanningTools(server, config);
-registerEditingTools(server, config);
-registerValidationTools(server, config);
-registerLampaDeepTools(server, config);
-registerAdvancedTools(server, config);
-registerLampaModernTools(server, config);
-registerCubTools(server, config);
-registerResources(server, config);
-
+const server = createLampaServer(config);
 const transport = new StdioServerTransport();
 await server.connect(transport);

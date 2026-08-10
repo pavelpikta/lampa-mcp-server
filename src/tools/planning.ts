@@ -1,33 +1,35 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import path from "node:path";
 import type { Config } from "../config.js";
+import { basename } from "../fs/paths.js";
 import { fileExists } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
 import { inferFeatureFiles, detectRisks, LAMPA_RISKY_PATTERNS } from "../utils/lampa.js";
 
 export function registerPlanningTools(server: McpServer, config: Config): void {
   // ── plan_feature_change ────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "plan_feature_change",
-    "Generate a step-by-step implementation plan for a requested Lampa feature or change. Must be called before draft_patch.",
     {
-      request: z
-        .string()
-        .describe(
-          "Plain-language description of the change, e.g. 'add a sleep timer to the player'."
-        ),
-      scope_hint: z
-        .string()
-        .optional()
-        .describe("Optional hint for which feature area is involved."),
+      description:
+        "Generate a step-by-step implementation plan for a requested Lampa feature or change. Must be called before draft_patch.",
+      inputSchema: {
+        request: z
+          .string()
+          .describe(
+            "Plain-language description of the change, e.g. 'add a sleep timer to the player'."
+          ),
+        scope_hint: z
+          .string()
+          .optional()
+          .describe("Optional hint for which feature area is involved."),
+      },
     },
     async ({ request, scope_hint }) => {
       const combinedQuery = scope_hint ? `${request} ${scope_hint}` : request;
-      const files = inferFeatureFiles(config.repoPath, combinedQuery);
-      const risks = detectRisks(config.repoPath, files);
+      const files = await inferFeatureFiles(config.fs, combinedQuery);
+      const risks = await detectRisks(config.fs, files);
 
-      // Live search for tokens in the request
       const words = request
         .toLowerCase()
         .replace(/[^a-z0-9\s]/g, "")
@@ -36,7 +38,7 @@ export function registerPlanningTools(server: McpServer, config: Config): void {
 
       const liveHits: string[] = [];
       for (const word of words.slice(0, 3)) {
-        const matches = searchCode(config.repoPath, word, ["*.js"], false);
+        const matches = await searchCode(config.fs, word, ["*.js"], false);
         for (const m of matches.slice(0, 5)) {
           liveHits.push(`${m.file}:${m.line}  ${m.text}`);
         }
@@ -86,24 +88,25 @@ export function registerPlanningTools(server: McpServer, config: Config): void {
   );
 
   // ── impact_analysis ────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "impact_analysis",
-    "Analyse the potential impact of modifying a specific file or module.",
     {
-      file: z.string().describe("Repo-relative path to the file you plan to edit."),
+      description: "Analyse the potential impact of modifying a specific file or module.",
+      inputSchema: {
+        file: z.string().describe("Repo-relative path to the file you plan to edit."),
+      },
     },
     async ({ file }) => {
-      const abs = path.join(config.repoPath, file);
-      if (!fileExists(abs)) {
+      if (!(await fileExists(config.fs, file))) {
         return { content: [{ type: "text", text: `File not found: ${file}` }] };
       }
 
-      const basename = path.basename(file, path.extname(file));
-      const reverseRefs = searchCode(config.repoPath, basename, ["*.js", "*.ts"], false)
+      const base = basename(file).replace(/\.[^.]+$/, "");
+      const reverseRefs = (await searchCode(config.fs, base, ["*.js", "*.ts"], false))
         .filter((m) => m.file !== file)
         .slice(0, 30);
 
-      const risks = detectRisks(config.repoPath, [file]);
+      const risks = await detectRisks(config.fs, [file]);
 
       const impact = [
         `# Impact Analysis: ${file}`,
@@ -127,15 +130,21 @@ export function registerPlanningTools(server: McpServer, config: Config): void {
   );
 
   // ── suggest_edit_targets ───────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "suggest_edit_targets",
-    "Given a feature request, suggest the minimal set of files to edit and the best insertion points.",
     {
-      request: z.string().describe("The change you want to make."),
+      description:
+        "Given a feature request, suggest the minimal set of files to edit and the best insertion points.",
+      inputSchema: {
+        request: z.string().describe("The change you want to make."),
+      },
     },
     async ({ request }) => {
-      const files = inferFeatureFiles(config.repoPath, request);
-      const filtered = files.filter((f) => fileExists(path.join(config.repoPath, f)));
+      const files = await inferFeatureFiles(config.fs, request);
+      const filtered: string[] = [];
+      for (const f of files) {
+        if (await fileExists(config.fs, f)) filtered.push(f);
+      }
 
       const suggestions = [
         `# Edit targets for: "${request}"`,
@@ -158,21 +167,22 @@ export function registerPlanningTools(server: McpServer, config: Config): void {
   );
 
   // ── risk_scan ──────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "risk_scan",
-    "Scan a file or folder for coupling risks: shared state, global events, settings persistence, reused components.",
     {
-      target: z.string().describe("Repo-relative file or folder path to scan."),
+      description:
+        "Scan a file or folder for coupling risks: shared state, global events, settings persistence, reused components.",
+      inputSchema: {
+        target: z.string().describe("Repo-relative file or folder path to scan."),
+      },
     },
     async ({ target }) => {
-      const abs = path.join(config.repoPath, target);
-      if (!fileExists(abs)) {
+      if (!(await fileExists(config.fs, target))) {
         return { content: [{ type: "text", text: `Not found: ${target}` }] };
       }
 
-      const risks = detectRisks(config.repoPath, [target]);
+      const risks = await detectRisks(config.fs, [target]);
 
-      // Also scan for additional patterns
       const extraPatterns = [
         "window.",
         "document.",
@@ -181,8 +191,11 @@ export function registerPlanningTools(server: McpServer, config: Config): void {
         "globalThis",
       ];
       const extraHits: string[] = [];
+      const inScope = (file: string) => file === target || file.startsWith(`${target}/`);
       for (const pat of extraPatterns) {
-        const matches = searchCode(abs, pat, [], false);
+        const matches = (await searchCode(config.fs, pat, [], false)).filter((m) =>
+          inScope(m.file)
+        );
         for (const m of matches.slice(0, 3)) {
           extraHits.push(`${pat} at line ${m.line}: ${m.text}`);
         }

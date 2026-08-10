@@ -1,5 +1,5 @@
-import path from "node:path";
-import fs from "node:fs";
+import type { RepoFs } from "../fs/types.js";
+import { basename } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe } from "./fs.js";
 
 // ── Type definitions ───────────────────────────────────────────────────────
@@ -23,17 +23,16 @@ export interface ProviderInfo {
  * Extract all unique Lampa.Module top-level names used in JS files under a path.
  * Returns a map of module name -> list of relative file paths that use it.
  */
-export function extractLampaApiUsage(
-  dirOrFile: string,
-  repoPath: string
-): Record<string, string[]> {
-  const files = getJsFiles(dirOrFile);
+export async function extractLampaApiUsage(
+  fs: RepoFs,
+  dirOrFile: string
+): Promise<Record<string, string[]>> {
+  const files = await getJsFiles(fs, dirOrFile);
   const usage: Record<string, string[]> = {};
 
-  for (const file of files) {
-    const content = readFileSafe(file);
+  for (const relFile of files) {
+    const content = await readFileSafe(fs, relFile);
     if (!content) continue;
-    const relFile = path.relative(repoPath, file);
     const pattern = /Lampa\.([A-Z][a-zA-Z]+)/g;
     let m: RegExpExecArray | null;
     while ((m = pattern.exec(content)) !== null) {
@@ -48,15 +47,14 @@ export function extractLampaApiUsage(
 /**
  * Extract Lampa.Listener.follow and Lampa.Listener.send calls in JS files under a path.
  */
-export function extractEvents(dirOrFile: string, repoPath: string): EventUsage {
-  const files = getJsFiles(dirOrFile);
+export async function extractEvents(fs: RepoFs, dirOrFile: string): Promise<EventUsage> {
+  const files = await getJsFiles(fs, dirOrFile);
   const follows: Record<string, string[]> = {};
   const sends: Record<string, string[]> = {};
 
-  for (const file of files) {
-    const content = readFileSafe(file);
+  for (const relFile of files) {
+    const content = await readFileSafe(fs, relFile);
     if (!content) continue;
-    const relFile = path.relative(repoPath, file);
 
     const followPat = /Lampa\.Listener\.follow\(['"]([^'"]+)['"]/g;
     const sendPat = /Lampa\.Listener\.send\(['"]([^'"]+)['"]/g;
@@ -84,8 +82,8 @@ export function extractEvents(dirOrFile: string, repoPath: string): EventUsage {
  * Handles both `export default { key: 'value' }` (src/lang) and
  * `Lampa.lang('code', { key: 'value' })` (public/lang) formats.
  */
-export function parseLangFile(filePath: string): string[] {
-  const content = readFileSafe(filePath);
+export async function parseLangFile(fs: RepoFs, relPath: string): Promise<string[]> {
+  const content = await readFileSafe(fs, relPath);
   if (!content) return [];
   // Match keys like: 'some_key': or "some_key":
   const pattern = /['"]([a-z][a-z0-9_]{1,60})['"]\s*:/g;
@@ -102,9 +100,9 @@ export function parseLangFile(filePath: string): string[] {
 /**
  * Extract metadata from a streaming provider JS file (plugins/online/*.js).
  */
-export function extractProviderInfo(filePath: string): ProviderInfo {
-  const content = readFileSafe(filePath) ?? "";
-  const name = path.basename(filePath, ".js");
+export async function extractProviderInfo(fs: RepoFs, relPath: string): Promise<ProviderInfo> {
+  const content = (await readFileSafe(fs, relPath)) ?? "";
+  const name = basename(relPath, ".js");
 
   // Base URL (let/var/const embed = '...')
   const urlMatch = content.match(/(?:let|var|const)\s+embed\s*=\s*['"]([^'"]+)['"]/);
@@ -130,7 +128,7 @@ export function extractProviderInfo(filePath: string): ProviderInfo {
     baseUrl,
     methods: [...new Set(methods)],
     lampaApis: [...lampaSet],
-    path: filePath,
+    path: relPath,
   };
 }
 
@@ -152,10 +150,9 @@ export interface LifecycleSummary {
 /**
  * Analyse a single component JS file's lifecycle in depth.
  */
-export function analyseComponentFile(filePath: string, repoPath: string): LifecycleSummary {
-  const content = readFileSafe(filePath) ?? "";
+export async function analyseComponentFile(fs: RepoFs, relPath: string): Promise<LifecycleSummary> {
+  const content = (await readFileSafe(fs, relPath)) ?? "";
   const lines = content.split("\n");
-  const relFile = path.relative(repoPath, filePath);
 
   // Lifecycle method patterns
   const methodPatterns: Record<string, RegExp> = {
@@ -179,9 +176,9 @@ export function analyseComponentFile(filePath: string, repoPath: string): Lifecy
     }
   }
 
-  const events = extractEvents(filePath, repoPath);
+  const events = await extractEvents(fs, relPath);
 
-  const lampaUsage = extractLampaApiUsage(filePath, repoPath);
+  const lampaUsage = await extractLampaApiUsage(fs, relPath);
   const lampaApis = Object.keys(lampaUsage);
 
   // Extract specific usages inline (search the lines array directly)
@@ -201,7 +198,7 @@ export function analyseComponentFile(filePath: string, repoPath: string): Lifecy
   }
 
   return {
-    file: relFile,
+    file: relPath,
     lineCount: lines.length,
     methods,
     events,
@@ -216,11 +213,11 @@ export function analyseComponentFile(filePath: string, repoPath: string): Lifecy
 
 // ── Internal helpers ──────────────────────────────────────────────────────
 
-function getJsFiles(dirOrFile: string): string[] {
-  try {
-    const stat = fs.statSync(dirOrFile);
-    return stat.isDirectory() ? listFilesRecursive(dirOrFile, [".js"]) : [dirOrFile];
-  } catch {
-    return [];
+async function getJsFiles(fs: RepoFs, dirOrFile: string): Promise<string[]> {
+  const asFile = await fs.readFile(dirOrFile);
+  if (asFile !== null) return [dirOrFile];
+  if (await fs.exists(dirOrFile)) {
+    return listFilesRecursive(fs, dirOrFile, [".js"]);
   }
+  return [];
 }

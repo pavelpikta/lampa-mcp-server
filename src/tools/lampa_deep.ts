@@ -1,10 +1,9 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import path from "node:path";
-import fs from "node:fs";
 import type { Config } from "../config.js";
+import { basename, joinRepo } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
-import { searchCode } from "../utils/search.js";
+import { searchCode, type SearchMatch } from "../utils/search.js";
 import {
   extractLampaApiUsage,
   extractEvents,
@@ -15,25 +14,26 @@ import {
 
 export function registerLampaDeepTools(server: McpServer, config: Config): void {
   // ── plugin_deep_dive ───────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "plugin_deep_dive",
-    "Comprehensive single-call analysis of a Lampa plugin folder: all files, Lampa API usage, event hooks (follow/send), settings registrations, CSS, and entry-point preview. Replaces 6–10 individual tool calls.",
     {
-      plugin: z
-        .string()
-        .describe(
-          "Plugin folder name inside plugins/, e.g. 'online', 'iptv', 'collections', 'shots', 'online_prestige', 'dlna'."
-        ),
+      description:
+        "Comprehensive single-call analysis of a Lampa plugin folder: all files, Lampa API usage, event hooks (follow/send), settings registrations, CSS, and entry-point preview. Replaces 6–10 individual tool calls.",
+      inputSchema: {
+        plugin: z
+          .string()
+          .describe(
+            "Plugin folder name inside plugins/, e.g. 'online', 'iptv', 'collections', 'shots', 'online_prestige', 'dlna'."
+          ),
+      },
     },
     async ({ plugin }) => {
-      const pluginsRoot = path.join(config.repoPath, "plugins");
-      const pluginDir = path.join(pluginsRoot, plugin);
+      const pluginDir = joinRepo("plugins", plugin);
 
-      if (!fileExists(pluginDir)) {
-        const available = fileExists(pluginsRoot)
-          ? fs
-              .readdirSync(pluginsRoot, { withFileTypes: true })
-              .filter((e) => e.isDirectory())
+      if (!(await fileExists(config.fs, pluginDir))) {
+        const available = (await fileExists(config.fs, "plugins"))
+          ? (await config.fs.listDir("plugins"))
+              .filter((e) => e.type === "dir")
               .map((e) => e.name)
               .join(", ")
           : "plugins/ directory not found";
@@ -47,29 +47,26 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
         };
       }
 
-      const allFiles = listFilesRecursive(pluginDir, []);
+      const allFiles = await listFilesRecursive(config.fs, pluginDir, []);
       const jsFiles = allFiles.filter((f) => f.endsWith(".js"));
       const cssFiles = allFiles.filter((f) => f.endsWith(".css") || f.endsWith(".scss"));
-      const relFiles = allFiles.map((f) => path.relative(config.repoPath, f));
 
-      const lampaApis = extractLampaApiUsage(pluginDir, config.repoPath);
-      const { follows, sends } = extractEvents(pluginDir, config.repoPath);
+      const lampaApis = await extractLampaApiUsage(config.fs, pluginDir);
+      const { follows, sends } = await extractEvents(config.fs, pluginDir);
 
-      // Settings registrations
-      const settingsHits = searchCode(config.repoPath, "Lampa.Settings.add", ["*.js"], false)
+      const settingsHits = (await searchCode(config.fs, "Lampa.Settings.add", ["*.js"], false))
         .filter((m) => m.file.startsWith(`plugins/${plugin}/`))
         .map((m) => `  ${m.file}:${m.line}  ${m.text.trim()}`);
 
-      // Entry point
       const entryPoint =
-        jsFiles.find((f) => path.basename(f) === "main.js") ??
-        jsFiles.find((f) => path.basename(f) === `${plugin}.js`) ??
+        jsFiles.find((f) => basename(f) === "main.js") ??
+        jsFiles.find((f) => basename(f) === `${plugin}.js`) ??
         jsFiles[0] ??
         null;
 
       let entryPreview = "";
       if (entryPoint) {
-        const content = readFileSafe(entryPoint) ?? "";
+        const content = (await readFileSafe(config.fs, entryPoint)) ?? "";
         entryPreview = content.split("\n").slice(0, 30).join("\n");
       }
 
@@ -102,8 +99,8 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
         `# Plugin deep-dive: **${plugin}**`,
         `**Path:** plugins/${plugin}  |  **JS files:** ${jsFiles.length}  |  **CSS files:** ${cssFiles.length}`,
         ``,
-        `## File structure (${relFiles.length} total)`,
-        relFiles.map((f) => `- ${f}`).join("\n"),
+        `## File structure (${allFiles.length} total)`,
+        allFiles.map((f) => `- ${f}`).join("\n"),
         ``,
         `## Lampa API usage`,
         apiBlock,
@@ -117,7 +114,7 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
         `## Settings registrations`,
         settingsHits.length > 0 ? settingsHits.join("\n") : "None.",
         ``,
-        `## Entry point: ${entryPoint ? path.relative(config.repoPath, entryPoint) : "not found"}`,
+        `## Entry point: ${entryPoint ?? "not found"}`,
         entryPoint ? `\`\`\`javascript\n${entryPreview}\n\`\`\`` : "No entry point file found.",
       ].join("\n");
 
@@ -126,24 +123,30 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
   );
 
   // ── list_streaming_providers ───────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "list_streaming_providers",
-    "List all online streaming content providers bundled with Lampa (plugins/online/*.js and plugins/online_prestige/balansers/*.js). Shows base URL, public methods, and Lampa APIs each provider uses.",
-    {},
+    {
+      description:
+        "List all online streaming content providers bundled with Lampa (plugins/online/*.js and plugins/online_prestige/balansers/*.js). Shows base URL, public methods, and Lampa APIs each provider uses.",
+      inputSchema: {},
+    },
     async () => {
-      const dirs = [
-        path.join(config.repoPath, "plugins", "online"),
-        path.join(config.repoPath, "plugins", "online_prestige", "balansers"),
-      ];
+      const dirs = ["plugins/online", "plugins/online_prestige/balansers"];
 
       const providerFiles: string[] = [];
       for (const dir of dirs) {
-        if (!fileExists(dir)) continue;
-        const files = fs
-          .readdirSync(dir)
-          .filter((f) => f.endsWith(".js") && !f.startsWith("component") && !f.startsWith("online"))
-          .map((f) => path.join(dir, f));
-        providerFiles.push(...files);
+        if (!(await fileExists(config.fs, dir))) continue;
+        const entries = await config.fs.listDir(dir);
+        for (const e of entries) {
+          if (
+            e.type === "file" &&
+            e.name.endsWith(".js") &&
+            !e.name.startsWith("component") &&
+            !e.name.startsWith("online")
+          ) {
+            providerFiles.push(joinRepo(dir, e.name));
+          }
+        }
       }
 
       if (providerFiles.length === 0) {
@@ -157,18 +160,25 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
         };
       }
 
-      const providers = providerFiles.map(extractProviderInfo);
+      const providers = [];
+      for (const f of providerFiles) {
+        providers.push(await extractProviderInfo(config.fs, f));
+      }
 
       const sections = providers.map((p) => {
-        const rel = path.relative(config.repoPath, p.path);
         return [
           `## ${p.name}`,
-          `**File:** ${rel}`,
+          `**File:** ${p.path}`,
           `**Base URL:** ${p.baseUrl ?? "*(not found — may use proxy or dynamic URL)*"}`,
           `**Public methods:** ${p.methods.length > 0 ? p.methods.join(", ") : "none detected"}`,
           `**Lampa APIs:** ${p.lampaApis.length > 0 ? p.lampaApis.join(", ") : "none"}`,
         ].join("\n");
       });
+
+      const scannedDirs: string[] = [];
+      for (const d of dirs) {
+        if (await fileExists(config.fs, d)) scannedDirs.push(`- ${d}`);
+      }
 
       const out = [
         `# Lampa Streaming Providers (${providers.length})`,
@@ -177,10 +187,7 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
         ``,
         `---`,
         `**Provider directories scanned:**`,
-        dirs
-          .filter(fileExists)
-          .map((d) => `- ${path.relative(config.repoPath, d)}`)
-          .join("\n"),
+        scannedDirs.join("\n"),
         ``,
         `> Use \`plugin_deep_dive\` with plugin name \`online\` or \`online_prestige\` for full source analysis.`,
       ].join("\n");
@@ -190,23 +197,23 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
   );
 
   // ── translation_coverage ───────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "translation_coverage",
-    "Compare all Lampa language files against the English reference. Shows coverage percentage and lists missing/extra keys per language. Helps identify untranslated strings before shipping.",
     {
-      show_missing: z
-        .boolean()
-        .optional()
-        .describe("Include the list of missing keys for each language. Default: true."),
+      description:
+        "Compare all Lampa language files against the English reference. Shows coverage percentage and lists missing/extra keys per language. Helps identify untranslated strings before shipping.",
+      inputSchema: {
+        show_missing: z
+          .boolean()
+          .optional()
+          .describe("Include the list of missing keys for each language. Default: true."),
+      },
     },
     async ({ show_missing = true }) => {
-      // Prefer src/lang/ (ES module format, more keys); fall back to public/lang/
-      const srcLangDir = path.join(config.repoPath, "src", "lang");
-      const pubLangDir = path.join(config.repoPath, "public", "lang");
-      const langDir = fileExists(srcLangDir)
-        ? srcLangDir
-        : fileExists(pubLangDir)
-          ? pubLangDir
+      const langDir = (await fileExists(config.fs, "src/lang"))
+        ? "src/lang"
+        : (await fileExists(config.fs, "public/lang"))
+          ? "public/lang"
           : null;
 
       if (!langDir) {
@@ -220,29 +227,29 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
         };
       }
 
-      const langFiles = fs
-        .readdirSync(langDir)
-        .filter((f) => f.endsWith(".js") && f !== "meta.js" && f !== "README.md")
+      const langFiles = (await config.fs.listDir(langDir))
+        .filter((e) => e.type === "file" && e.name.endsWith(".js") && e.name !== "meta.js")
+        .map((e) => e.name)
         .sort();
 
-      const enFile = path.join(langDir, "en.js");
-      if (!fileExists(enFile)) {
+      const enFile = joinRepo(langDir, "en.js");
+      if (!(await fileExists(config.fs, enFile))) {
         return {
           content: [
             {
               type: "text" as const,
-              text: `Reference file en.js not found in ${path.relative(config.repoPath, langDir)}.`,
+              text: `Reference file en.js not found in ${langDir}.`,
             },
           ],
         };
       }
 
-      const enKeys = parseLangFile(enFile);
+      const enKeys = await parseLangFile(config.fs, enFile);
       const enCount = enKeys.length;
 
       const rows: string[] = [
         `# Translation Coverage`,
-        `**Directory:** ${path.relative(config.repoPath, langDir)}`,
+        `**Directory:** ${langDir}`,
         `**Reference:** en.js (${enCount} keys)`,
         ``,
         `| Lang | File | Keys | Coverage | Missing |`,
@@ -252,8 +259,8 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
       const details: string[] = [];
 
       for (const file of langFiles) {
-        const langPath = path.join(langDir, file);
-        const keys = parseLangFile(langPath);
+        const langPath = joinRepo(langDir, file);
+        const keys = await parseLangFile(config.fs, langPath);
         const missingKeys = enKeys.filter((k) => !keys.includes(k));
         const extraKeys = keys.filter((k) => !enKeys.includes(k));
         const covered = enCount - missingKeys.length;
@@ -293,19 +300,20 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
   );
 
   // ── trace_event ────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "trace_event",
-    "Trace a Lampa event through the entire codebase. Shows every file that emits it (Lampa.Listener.send) and every file that listens to it (Lampa.Listener.follow). Essential for understanding the event bus.",
     {
-      event: z
-        .string()
-        .describe(
-          "Lampa event name, e.g. 'app', 'full', 'player', 'catalog', 'torrent_file', 'shots_status', 'state:changed'."
-        ),
+      description:
+        "Trace a Lampa event through the entire codebase. Shows every file that emits it (Lampa.Listener.send) and every file that listens to it (Lampa.Listener.follow). Essential for understanding the event bus.",
+      inputSchema: {
+        event: z
+          .string()
+          .describe(
+            "Lampa event name, e.g. 'app', 'full', 'player', 'catalog', 'torrent_file', 'shots_status', 'state:changed'."
+          ),
+      },
     },
     async ({ event }) => {
-      const rp = config.repoPath;
-
       const patterns = [
         `Lampa.Listener.follow('${event}'`,
         `Lampa.Listener.follow("${event}"`,
@@ -317,18 +325,17 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
         `.listener.send("${event}"`,
       ];
 
-      const allFollows: ReturnType<typeof searchCode> = [];
-      const allSends: ReturnType<typeof searchCode> = [];
+      const allFollows: SearchMatch[] = [];
+      const allSends: SearchMatch[] = [];
 
       for (const pat of patterns) {
-        const hits = searchCode(rp, pat, ["*.js"], false);
+        const hits = await searchCode(config.fs, pat, ["*.js"], false);
         const isSend = pat.includes(".send(");
         if (isSend) allSends.push(...hits);
         else allFollows.push(...hits);
       }
 
-      // Deduplicate by file+line
-      const dedup = (arr: typeof allFollows) => {
+      const dedup = (arr: SearchMatch[]) => {
         const seen = new Set<string>();
         return arr.filter((m) => {
           const key = `${m.file}:${m.line}`;
@@ -376,41 +383,35 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
   );
 
   // ── lampa_api_surface ──────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "lampa_api_surface",
-    "Extract the complete Lampa.* global API surface from the source code. Lists every module (Lampa.Storage, Lampa.Player, etc.) with its sub-methods and file usage count. The definitive reference for plugin development.",
     {
-      module: z
-        .string()
-        .optional()
-        .describe(
-          "Filter to a specific module, e.g. 'Storage', 'Player', 'Settings', 'Lang'. Omit for the full map."
-        ),
-      scope: z
-        .enum(["all", "plugins", "src"])
-        .optional()
-        .describe("Limit search scope. Default: 'all'."),
+      description:
+        "Extract the complete Lampa.* global API surface from the source code. Lists every module (Lampa.Storage, Lampa.Player, etc.) with its sub-methods and file usage count. The definitive reference for plugin development.",
+      inputSchema: {
+        module: z
+          .string()
+          .optional()
+          .describe(
+            "Filter to a specific module, e.g. 'Storage', 'Player', 'Settings', 'Lang'. Omit for the full map."
+          ),
+        scope: z
+          .enum(["all", "plugins", "src"])
+          .optional()
+          .describe("Limit search scope. Default: 'all'."),
+      },
     },
     async ({ module: mod, scope = "all" }) => {
-      const rp = config.repoPath;
-      const searchRoot =
-        scope === "plugins"
-          ? path.join(rp, "plugins")
-          : scope === "src"
-            ? path.join(rp, "src")
-            : rp;
+      const searchRoot = scope === "plugins" ? "plugins" : scope === "src" ? "src" : "";
 
-      const jsFiles = listFilesRecursive(searchRoot, [".js"]);
+      const jsFiles = await listFilesRecursive(config.fs, searchRoot, [".js"]);
 
-      // module -> { methods: Set, files: Set }
       const map: Record<string, { methods: Set<string>; files: Set<string> }> = {};
 
       for (const file of jsFiles) {
-        const content = readFileSafe(file);
+        const content = await readFileSafe(config.fs, file);
         if (!content) continue;
-        const relFile = path.relative(rp, file);
 
-        // Match Lampa.Module.method or Lampa.Module(
         const pat = /Lampa\.([A-Z][a-zA-Z]*)(?:\.([a-zA-Z_][a-zA-Z0-9_]*))?/g;
         let m: RegExpExecArray | null;
         while ((m = pat.exec(content)) !== null) {
@@ -419,7 +420,7 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
           if (mod && modName.toLowerCase() !== mod.toLowerCase()) continue;
           if (!map[modName]) map[modName] = { methods: new Set(), files: new Set() };
           if (method) map[modName].methods.add(method);
-          map[modName].files.add(relFile);
+          map[modName].files.add(file);
         }
       }
 
@@ -465,20 +466,23 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
   );
 
   // ── list_templates ─────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "list_templates",
-    "List all Lampa UI templates in src/templates/. Optionally read a specific template's source to understand its HTML structure and data bindings.",
     {
-      name: z
-        .string()
-        .optional()
-        .describe(
-          "Template name or partial name to read, e.g. 'card', 'modal', 'player', 'settings'. Omit to list all templates."
-        ),
+      description:
+        "List all Lampa UI templates in src/templates/. Optionally read a specific template's source to understand its HTML structure and data bindings.",
+      inputSchema: {
+        name: z
+          .string()
+          .optional()
+          .describe(
+            "Template name or partial name to read, e.g. 'card', 'modal', 'player', 'settings'. Omit to list all templates."
+          ),
+      },
     },
     async ({ name }) => {
-      const templatesDir = path.join(config.repoPath, "src", "templates");
-      if (!fileExists(templatesDir)) {
+      const templatesDir = "src/templates";
+      if (!(await fileExists(config.fs, templatesDir))) {
         return {
           content: [
             {
@@ -489,12 +493,11 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
         };
       }
 
-      const allFiles = listFilesRecursive(templatesDir, [".js"]);
-      const relPaths = allFiles.map((f) => path.relative(config.repoPath, f));
+      const allFiles = await listFilesRecursive(config.fs, templatesDir, [".js"]);
 
       if (!name) {
         const grouped: Record<string, string[]> = {};
-        for (const rel of relPaths) {
+        for (const rel of allFiles) {
           const parts = rel.split("/");
           const group = parts.length > 2 ? parts[2] : "root";
           if (!grouped[group]) grouped[group] = [];
@@ -510,14 +513,14 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
           content: [
             {
               type: "text" as const,
-              text: `# Lampa UI Templates (${relPaths.length} files)\n\n${lines}\n\nUse the \`name\` parameter to read a specific template.`,
+              text: `# Lampa UI Templates (${allFiles.length} files)\n\n${lines}\n\nUse the \`name\` parameter to read a specific template.`,
             },
           ],
         };
       }
 
       const lower = name.toLowerCase();
-      const matches = allFiles.filter((f) => path.basename(f).toLowerCase().includes(lower));
+      const matches = allFiles.filter((f) => basename(f).toLowerCase().includes(lower));
 
       if (matches.length === 0) {
         return {
@@ -530,12 +533,13 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
         };
       }
 
-      const results = matches.slice(0, 4).map((file) => {
-        const content = readFileSafe(file) ?? "";
+      const results = [];
+      for (const file of matches.slice(0, 4)) {
+        const content = (await readFileSafe(config.fs, file)) ?? "";
         const preview =
           content.length > 2500 ? content.slice(0, 2500) + "\n// …(truncated)" : content;
-        return `## ${path.relative(config.repoPath, file)}\n\`\`\`javascript\n${preview}\n\`\`\``;
-      });
+        results.push(`## ${file}\n\`\`\`javascript\n${preview}\n\`\`\``);
+      }
 
       return {
         content: [
@@ -549,30 +553,33 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
   );
 
   // ── generate_plugin_boilerplate ────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "generate_plugin_boilerplate",
-    "Generate a ready-to-use Lampa plugin boilerplate based on real patterns from existing plugins. Select the features you need and get working code instantly.",
     {
-      plugin_name: z.string().describe("Plugin folder/id in snake_case, e.g. 'my_plugin'."),
-      display_name: z
-        .string()
-        .describe("Human-readable name shown in the Lampa UI, e.g. 'My Plugin'."),
-      features: z
-        .array(
-          z.enum([
-            "settings",
-            "full_card_hook",
-            "player_hook",
-            "catalog_hook",
-            "storage",
-            "lang_keys",
-            "iptv",
-          ])
-        )
-        .optional()
-        .describe(
-          "Features to include. Defaults to [settings, full_card_hook]. Options: settings | full_card_hook | player_hook | catalog_hook | storage | lang_keys | iptv."
-        ),
+      description:
+        "Generate a ready-to-use Lampa plugin boilerplate based on real patterns from existing plugins. Select the features you need and get working code instantly.",
+      inputSchema: {
+        plugin_name: z.string().describe("Plugin folder/id in snake_case, e.g. 'my_plugin'."),
+        display_name: z
+          .string()
+          .describe("Human-readable name shown in the Lampa UI, e.g. 'My Plugin'."),
+        features: z
+          .array(
+            z.enum([
+              "settings",
+              "full_card_hook",
+              "player_hook",
+              "catalog_hook",
+              "storage",
+              "lang_keys",
+              "iptv",
+            ])
+          )
+          .optional()
+          .describe(
+            "Features to include. Defaults to [settings, full_card_hook]. Options: settings | full_card_hook | player_hook | catalog_hook | storage | lang_keys | iptv."
+          ),
+      },
     },
     async ({ plugin_name, display_name, features = ["settings", "full_card_hook"] }) => {
       const L: string[] = [];
@@ -784,38 +791,33 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
   );
 
   // ── component_lifecycle ────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "component_lifecycle",
-    "Deep-analyse a Lampa component's lifecycle: lifecycle methods (create/render/destroy), event hooks, Lampa APIs used, storage reads/writes, template usages, and settings interactions — all in one call.",
     {
-      component: z
-        .string()
-        .describe(
-          "Component name (e.g. 'episodes', 'bookmarks', 'full') or repo-relative file path (e.g. 'src/components/episodes.js')."
-        ),
+      description:
+        "Deep-analyse a Lampa component's lifecycle: lifecycle methods (create/render/destroy), event hooks, Lampa APIs used, storage reads/writes, template usages, and settings interactions — all in one call.",
+      inputSchema: {
+        component: z
+          .string()
+          .describe(
+            "Component name (e.g. 'episodes', 'bookmarks', 'full') or repo-relative file path (e.g. 'src/components/episodes.js')."
+          ),
+      },
     },
     async ({ component }) => {
-      const rp = config.repoPath;
       let targetFile: string | null = null;
 
-      // 1. Try as a direct repo-relative path
       if (component.includes("/") || component.endsWith(".js")) {
-        const abs = path.join(rp, component);
-        if (fileExists(abs)) targetFile = abs;
+        if (await fileExists(config.fs, component)) targetFile = component;
       }
 
-      // 2. Search by filename in known component directories
       if (!targetFile) {
-        const searchDirs = [
-          path.join(rp, "src", "components"),
-          path.join(rp, "src", "interaction"),
-          path.join(rp, "plugins"),
-        ];
+        const searchDirs = ["src/components", "src/interaction", "plugins"];
         const lower = component.toLowerCase().replace(/\.js$/, "");
         for (const dir of searchDirs) {
-          if (!fileExists(dir)) continue;
-          const files = listFilesRecursive(dir, [".js"]);
-          const match = files.find((f) => path.basename(f, ".js").toLowerCase() === lower);
+          if (!(await fileExists(config.fs, dir))) continue;
+          const files = await listFilesRecursive(config.fs, dir, [".js"]);
+          const match = files.find((f) => basename(f, ".js").toLowerCase() === lower);
           if (match) {
             targetFile = match;
             break;
@@ -838,7 +840,7 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
         };
       }
 
-      const summary = analyseComponentFile(targetFile, rp);
+      const summary = await analyseComponentFile(config.fs, targetFile);
 
       const lifecycleBlock =
         Object.entries(summary.methods)

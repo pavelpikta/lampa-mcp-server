@@ -1,35 +1,36 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import path from "node:path";
 import type { Config } from "../config.js";
 import { readFileSafe, fileExists } from "../utils/fs.js";
 import { inferFeatureFiles, detectRisks } from "../utils/lampa.js";
 
 export function registerEditingTools(server: McpServer, config: Config): void {
   // ── draft_patch ────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "draft_patch",
-    "Draft a code patch for a Lampa change. Requires a prior plan_feature_change call. Returns annotated diff-style suggestions.",
     {
-      request: z.string().describe("The change to implement."),
-      target_files: z
-        .array(z.string())
-        .optional()
-        .describe("Files to focus on (repo-relative paths)."),
-      plan_context: z
-        .string()
-        .optional()
-        .describe("Paste the output of plan_feature_change here for best results."),
+      description:
+        "Draft a code patch for a Lampa change. Requires a prior plan_feature_change call. Returns annotated diff-style suggestions.",
+      inputSchema: {
+        request: z.string().describe("The change to implement."),
+        target_files: z
+          .array(z.string())
+          .optional()
+          .describe("Files to focus on (repo-relative paths)."),
+        plan_context: z
+          .string()
+          .optional()
+          .describe("Paste the output of plan_feature_change here for best results."),
+      },
     },
     async ({ request, target_files, plan_context }) => {
-      const files = target_files ?? inferFeatureFiles(config.repoPath, request);
-      const risks = detectRisks(config.repoPath, files);
+      const files = target_files ?? (await inferFeatureFiles(config.fs, request));
+      const risks = await detectRisks(config.fs, files);
 
       const fileSnippets: string[] = [];
       for (const f of files.slice(0, 5)) {
-        const abs = path.join(config.repoPath, f);
-        if (!fileExists(abs)) continue;
-        const content = readFileSafe(abs) ?? "";
+        if (!(await fileExists(config.fs, f))) continue;
+        const content = (await readFileSafe(config.fs, f)) ?? "";
         const preview = content.split("\n").slice(0, 30).join("\n");
         fileSnippets.push(`### ${f} (first 30 lines)\n\`\`\`javascript\n${preview}\n\`\`\``);
       }
@@ -104,15 +105,18 @@ export function registerEditingTools(server: McpServer, config: Config): void {
   );
 
   // ── insert_hook ────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "insert_hook",
-    "Find the best Lampa.Listener or Lampa.Event hook point for a given trigger or lifecycle event.",
     {
-      trigger: z
-        .string()
-        .describe(
-          "The event or lifecycle moment, e.g. 'player start', 'card render', 'settings open'."
-        ),
+      description:
+        "Find the best Lampa.Listener or Lampa.Event hook point for a given trigger or lifecycle event.",
+      inputSchema: {
+        trigger: z
+          .string()
+          .describe(
+            "The event or lifecycle moment, e.g. 'player start', 'card render', 'settings open'."
+          ),
+      },
     },
     async ({ trigger }) => {
       const lower = trigger.toLowerCase();
@@ -185,15 +189,17 @@ export function registerEditingTools(server: McpServer, config: Config): void {
   );
 
   // ── add_setting ────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "add_setting",
-    "Generate the boilerplate to add a new setting to Lampa's settings panel.",
     {
-      key: z.string().describe("Storage key for the setting, e.g. 'my_plugin_enabled'."),
-      label: z.string().describe("Human-readable label shown in the UI."),
-      type: z.enum(["toggle", "select", "input"]).describe("Setting type."),
-      default_value: z.string().optional().describe("Default value."),
-      options: z.array(z.string()).optional().describe("Options for 'select' type."),
+      description: "Generate the boilerplate to add a new setting to Lampa's settings panel.",
+      inputSchema: {
+        key: z.string().describe("Storage key for the setting, e.g. 'my_plugin_enabled'."),
+        label: z.string().describe("Human-readable label shown in the UI."),
+        type: z.enum(["toggle", "select", "input"]).describe("Setting type."),
+        default_value: z.string().optional().describe("Default value."),
+        options: z.array(z.string()).optional().describe("Options for 'select' type."),
+      },
     },
     async ({ key, label, type, default_value, options }) => {
       let snippet: string;
@@ -262,12 +268,15 @@ export function registerEditingTools(server: McpServer, config: Config): void {
   );
 
   // ── scaffold_plugin_integration ────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "scaffold_plugin_integration",
-    "Generate a complete Lampa plugin scaffold (folder structure + main.js boilerplate) for a new plugin.",
     {
-      plugin_name: z.string().describe("Plugin name, e.g. 'my_feature'. Use snake_case."),
-      description: z.string().describe("One-sentence description of what the plugin does."),
+      description:
+        "Generate a complete Lampa plugin scaffold (folder structure + main.js boilerplate) for a new plugin.",
+      inputSchema: {
+        plugin_name: z.string().describe("Plugin name, e.g. 'my_feature'. Use snake_case."),
+        description: z.string().describe("One-sentence description of what the plugin does."),
+      },
     },
     async ({ plugin_name, description }) => {
       const cssClass = plugin_name.replace(/_/g, "-");

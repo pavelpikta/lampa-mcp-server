@@ -1,4 +1,5 @@
-import path from "node:path";
+import type { RepoFs } from "../fs/types.js";
+import { joinRepo } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe } from "./fs.js";
 import { searchCode } from "./search.js";
 
@@ -71,7 +72,7 @@ export const LAMPA_RISKY_PATTERNS = [
   },
 ];
 
-export function inferFeatureFiles(repoPath: string, featureName: string): string[] {
+export async function inferFeatureFiles(fs: RepoFs, featureName: string): Promise<string[]> {
   const lower = featureName.toLowerCase();
   const hits: string[] = [];
 
@@ -83,10 +84,8 @@ export function inferFeatureFiles(repoPath: string, featureName: string): string
     }
   }
 
-  // Also do a live search for the feature name in filenames
-  const allFiles = listFilesRecursive(repoPath, [".js", ".ts", ".scss", ".css"]);
-  for (const f of allFiles) {
-    const rel = path.relative(repoPath, f);
+  const allFiles = await listFilesRecursive(fs, "", [".js", ".ts", ".scss", ".css"]);
+  for (const rel of allFiles) {
     if (rel.toLowerCase().includes(lower) && !hits.includes(rel)) {
       hits.push(rel);
     }
@@ -95,11 +94,11 @@ export function inferFeatureFiles(repoPath: string, featureName: string): string
   return [...new Set(hits)];
 }
 
-export function detectRisks(repoPath: string, files: string[]): string[] {
+export async function detectRisks(fs: RepoFs, files: string[]): Promise<string[]> {
   const warnings: string[] = [];
 
   for (const relFile of files) {
-    const content = readFileSafe(path.join(repoPath, relFile));
+    const content = await readFileSafe(fs, relFile);
     if (!content) continue;
 
     for (const { pattern, reason } of LAMPA_RISKY_PATTERNS) {
@@ -112,7 +111,7 @@ export function detectRisks(repoPath: string, files: string[]): string[] {
   return [...new Set(warnings)];
 }
 
-export function findSettingsInRepo(repoPath: string, keyword?: string): string {
+export async function findSettingsInRepo(fs: RepoFs, keyword?: string): Promise<string> {
   const patterns = [
     "Lampa.Settings.add",
     "Lampa.Settings.get",
@@ -125,7 +124,7 @@ export function findSettingsInRepo(repoPath: string, keyword?: string): string {
   const lines: string[] = [];
   for (const pat of patterns) {
     if (keyword && !pat.toLowerCase().includes(keyword.toLowerCase())) continue;
-    const matches = searchCode(repoPath, pat, ["*.js"], false);
+    const matches = await searchCode(fs, pat, ["*.js"], false);
     for (const m of matches.slice(0, 10)) {
       lines.push(`${m.file}:${m.line}  ${m.text}`);
     }
@@ -133,15 +132,19 @@ export function findSettingsInRepo(repoPath: string, keyword?: string): string {
   return lines.join("\n") || "No settings patterns found.";
 }
 
-export function findApiCallsInRepo(repoPath: string, provider?: string): string {
+export async function findApiCallsInRepo(fs: RepoFs, provider?: string): Promise<string> {
   const patterns = ["fetch(", "Lampa.Api", "$.ajax", "XMLHttpRequest", "axios", ".get(", ".post("];
+  const providerPrefix = provider ? joinRepo("plugins", provider).toLowerCase() : null;
 
   const lines: string[] = [];
   for (const pat of patterns) {
-    const searchPath = provider ? path.join(repoPath, "plugins", provider) : repoPath;
-    const matches = searchCode(searchPath, pat, ["*.js"], false);
+    const matches = await searchCode(fs, pat, ["*.js"], false);
     for (const m of matches.slice(0, 8)) {
-      if (!provider || m.file.toLowerCase().includes(provider.toLowerCase())) {
+      if (
+        !providerPrefix ||
+        m.file.toLowerCase().startsWith(providerPrefix) ||
+        m.file.toLowerCase().includes(provider!.toLowerCase())
+      ) {
         lines.push(`${m.file}:${m.line}  ${m.text}`);
       }
     }

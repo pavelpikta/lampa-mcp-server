@@ -24,3 +24,7 @@ npm-debug.log*
 
 # Temp / source snapshots (not part of the MCP server itself)
 temp/
+
+# Wrangler local state
+.wrangler/
+.dev.vars
