@@ -2,9 +2,9 @@ name: Upload Lampa snapshot to R2
 
 on:
   workflow_dispatch:
-  schedule:
-    # Weekly refresh of the pinned Lampa source snapshot
-    - cron: "0 6 * * 1"
+  # schedule:
+  # Weekly refresh of the pinned Lampa source snapshot
+  # - cron: "0 6 * * 1"
 
 jobs:
   upload:

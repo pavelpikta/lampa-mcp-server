@@ -223,18 +223,33 @@ wrangler.jsonc
 ## Development
 
 ```bash
-npm run build                # compile stdio CLI → dist/
-npm run dev                  # stdio via ts-node
+npm run build                # wrangler types + tsc → dist/
+npm run dev                  # build, then run stdio server
 npm start                    # run compiled stdio server
-npm run typecheck
+npm run typecheck            # wrangler types + tsc --noEmit
 npm run lint
 npm run format
-npm run types:worker         # regenerate worker-configuration.d.ts
+npm run types:worker         # regenerate worker-configuration.d.ts (gitignored)
 npm run dev:worker           # wrangler dev
 npm run deploy               # wrangler deploy
 npm run snapshot:upload:local
 npm run snapshot:upload
 ```
+
+### Dependencies (what / why)
+
+| Package | Role |
+|---|---|
+| `@modelcontextprotocol/server` | MCP SDK (stdio + shared server factory) |
+| `agents` | Workers MCP handler (`createMcpHandler`) |
+| `@cloudflare/workers-oauth-provider` | Worker auth wrapper (PAT via `resolveExternalToken`) |
+| `hono` | Public HTML routes (`/`, `/authorize`) |
+| `zod` | Tool input schemas |
+| `typescript` | TypeScript 6 compiler + types for `typescript-eslint` |
+| `wrangler` | Deploy, `wrangler types`, local Worker dev |
+| `eslint` + `typescript-eslint` + `prettier` | Lint / format |
+
+Runtime deps ship with both the stdio CLI and the Worker. Dev deps are local-only.
 
 ---
 
