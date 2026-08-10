@@ -28,3 +28,4 @@ temp/
 # Wrangler local state
 .wrangler/
 .dev.vars
+worker-configuration.d.ts
