@@ -14,7 +14,7 @@ import { registerResources } from "./resources/index.js";
 export function createLampaServer(config: Config): McpServer {
   const server = new McpServer({
     name: "lampa-mcp-server",
-    version: "1.3.0",
+    version: "1.4.0",
   });
 
   registerDiscoveryTools(server, config);

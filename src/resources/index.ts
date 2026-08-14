@@ -12,6 +12,11 @@ import {
   LAMPA_API_SURFACE_KEYS,
 } from "../utils/lampa.js";
 import { extractLampaCubApi } from "../utils/cub.js";
+import {
+  formatPluginGuideToc,
+  PLUGIN_EVENTS_CHEATSHEET,
+  readPluginChapter,
+} from "../utils/plugin_docs.js";
 
 interface PackageJson {
   name?: string;
@@ -54,13 +59,23 @@ export function registerResources(server: McpServer, config: Config): void {
     "docs-index",
     "docs://index",
     {
-      description: "Generated documentation index (requires npm run doc first).",
+      description:
+        "Official Lampa plugin-guide table of contents (docs/en). Falls back to generated JSDoc if plugin docs are missing.",
     },
     async (uri) => {
+      const toc = await formatPluginGuideToc(config.fs, config.pluginDocsPath, "en");
+      if (await fileExists(config.fs, joinRepo(config.pluginDocsPath, "en/README.md"))) {
+        return { contents: [{ uri: uri.href, text: toc }] };
+      }
       const docsIndex = joinRepo(config.docsPath, "index.html");
       if (!(await fileExists(config.fs, docsIndex))) {
         return {
-          contents: [{ uri: uri.href, text: "Docs not generated. Run `npm run doc` in the repo." }],
+          contents: [
+            {
+              uri: uri.href,
+              text: "Plugin docs not found at docs/en. Generated JSDoc (npm run doc) is also missing.",
+            },
+          ],
         };
       }
       const raw = ((await readFileSafe(config.fs, docsIndex)) ?? "")
@@ -177,5 +192,49 @@ export function registerResources(server: McpServer, config: Config): void {
       ].join("\n");
       return { contents: [{ uri: uri.href, text }] };
     }
+  );
+
+  server.registerResource(
+    "lampa-plugin-guide",
+    "lampa://plugin-guide",
+    {
+      description:
+        "Official Lampa plugin development guide TOC, bootstrap snippet, and window.Lampa cheatsheet (docs/en).",
+    },
+    async (uri) => {
+      const text = await formatPluginGuideToc(config.fs, config.pluginDocsPath, "en");
+      return { contents: [{ uri: uri.href, text }] };
+    }
+  );
+
+  server.registerResource(
+    "lampa-pitfalls",
+    "lampa://pitfalls",
+    {
+      description: "Official plugin pitfalls (docs/en/11-pitfalls.md) — anti-patterns not to emit.",
+    },
+    async (uri) => {
+      const chapter = await readPluginChapter(config.fs, config.pluginDocsPath, "pitfalls", "en");
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            text: chapter?.text ?? "docs/en/11-pitfalls.md not found in the Lampa snapshot.",
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerResource(
+    "lampa-events",
+    "lampa://events",
+    {
+      description:
+        "Condensed plugin event catalog (Listener, Player, PlayerVideo, Storage, Favorite, Keypad).",
+    },
+    async (uri) => ({
+      contents: [{ uri: uri.href, text: PLUGIN_EVENTS_CHEATSHEET }],
+    })
   );
 }

@@ -465,7 +465,13 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
     async () => {
       const pluginsFile = "src/core/plugins.js";
       const gulpFile = "gulpfile.js";
-      const sections: string[] = [`# Plugin load path`, ``];
+      const sections: string[] = [
+        `# Plugin load path`,
+        ``,
+        `Runtime plugins are **script-injected IIFEs** that talk to \`window.Lampa\` — there is no bundler import into the app.`,
+        `Official authoring guide: resource \`lampa://plugin-guide\` (docs/en). Bootstrap with \`Lampa.Listener.follow('app', … ready)\`, not jQuery \`appready\`.`,
+        ``,
+      ];
 
       if (!(await fileExists(config.fs, pluginsFile))) {
         sections.push(`\`${pluginsFile}\` not found in the repository.`);
@@ -652,6 +658,13 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
       const out = [
         `# Component lifecycle: ${summary.file}`,
         `**Lines:** ${summary.lineCount}`,
+        ``,
+        `## Official contract (docs/en/02-lifecycle.md + 13-controller.md)`,
+        `- \`create()\` must return the root DOM/jQuery element synchronously; use \`this.activity.loader(true|false)\`.`,
+        `- \`start()\` runs when the screen gains focus — register \`Controller.add('content', …)\` and \`Controller.toggle('content')\` here.`,
+        `- \`stop()\` means another screen is on top — do not destroy resources.`,
+        `- \`destroy()\` on pop: \`inited = false\`, \`network.clear()\`, \`scroll.destroy()\`, remove named listeners.`,
+        `- \`render()\` returns the root; optional \`empty()\` calls \`this.activity.empty()\`.`,
         ``,
         `## Lifecycle methods`,
         lifecycleBlock,

@@ -13,14 +13,15 @@ Runs in two modes:
 
 ## What it does
 
-The server exposes discovery, analysis, planning, editing, validation, and Lampa/CUB specialty tools, plus curated resources (`lampa://landmarks`, `lampa://edit-rules`, `lampa://api-surface`).
+The server exposes discovery, analysis, planning, editing, validation, and Lampa/CUB specialty tools, plus curated resources (`lampa://plugin-guide`, `lampa://pitfalls`, `lampa://events`, `lampa://landmarks`, `lampa://edit-rules`, `lampa://api-surface`).
 
 Preferred agent loop:
 
 ```
-snapshot_info → landmarks / plugin_deep_dive
-  → search_code (use prefix) | maker_module_map | cub_api_catalog
-  → plan_change → draft_patch → validate_plugin | i18n_check
+snapshot_info → lampa://plugin-guide | plugin_docs
+  → plugin_deep_dive | search_code(prefix)
+  → plan_change → scaffold_plugin_integration / draft_patch
+  → validate_plugin | i18n_check
 ```
 
 Use `resolve_edit_path` before editing so you change `src/` / `plugins/` rather than `public/` or `build/`.
@@ -180,16 +181,13 @@ Then point the MCP inspector / client at `http://localhost:8787/mcp` with `Autho
 ## Recommended agent workflow
 
 ```
-repo_overview → find_feature → module_dependency_map
-    → plan_feature_change → draft_patch
+snapshot_info → lampa://plugin-guide | plugin_docs
+    → plugin_deep_dive | search_code(prefix)
+    → plan_change → scaffold_plugin_integration / draft_patch
+    → validate_plugin | i18n_check
 ```
 
-For deep plugin work:
-
-```
-plugin_deep_dive → maker_module_map → cub_api_catalog
-    → plan_feature_change → draft_patch → validate_plugin
-```
+Plugin authoring must follow official `docs/en` (Listener app:ready, SettingsApi, double-load guard). Do not emit `$(document).on('appready')` or `Lampa.Settings.add`.
 
 For CUB account/sync work:
 

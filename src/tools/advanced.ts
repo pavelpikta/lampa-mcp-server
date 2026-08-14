@@ -423,7 +423,7 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
     "validate_plugin",
     {
       description:
-        "Validate a Lampa plugin against established conventions: IIFE wrapping, strict mode, appready bootstrap, no localhost URLs, proper event cleanup, and more. Returns a scored report with fix guidance.",
+        "Validate a Lampa plugin against official plugin-docs pitfalls: double-load guard, Listener appready, PlayerVideo cleanup, SettingsApi, storage prefixes, and more.",
       inputSchema: {
         plugin: z
           .string()
@@ -475,6 +475,47 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
       const rel = targetFile;
       const lines = content.split("\n");
 
+      const jqueryAppready = /\$\(\s*document\s*\)\.on\(\s*['"]appready['"]/.test(content);
+      const listenerReady =
+        /Listener\.follow\(\s*['"]app['"]/.test(content) &&
+        /e\.type\s*==\s*['"]ready['"]/.test(content);
+      const hasAppreadyFlag = /\bwindow\.appready\b/.test(content) || /\bappready\b/.test(content);
+      const hasGuard =
+        /window\.\w+_ready/.test(content) && /if\s*\(\s*!window\.\w+_ready/.test(content);
+      const usesSettingsAdd = /Lampa\.Settings\.add\s*\(/.test(content);
+      const usesSettingsApi = /SettingsApi\.add(Component|Param)\s*\(/.test(content);
+      const overwritesLampaSettings = /window\.lampa_settings\s*=\s*\{/.test(content);
+      const addEventListenerHover = /addEventListener\(\s*['"]hover:/.test(content);
+      const jqueryHover = /\.on\(\s*['"]hover:(enter|focus|long|hover|touch)['"]/.test(content);
+      const playerVideoFollow = /PlayerVideo\.listener\.follow/.test(content);
+      const playerVideoRemove = /PlayerVideo\.listener\.remove/.test(content);
+      const hasNetwork = /new\s+Lampa\.Reguest\s*\(/.test(content);
+      const hasInited = /\binited\b/.test(content);
+      const hasNetworkClear = /network\.clear\s*\(/.test(content);
+      const cssAppend = /\$\(\s*['"]body['"]\s*\)\.append/.test(content);
+      const cssInInit = /function\s+init\s*\([^)]*\)\s*\{[\s\S]{0,2500}append/.test(content);
+
+      const pluginBase = basename(rel, ".js").split(/[/_-]/)[0] ?? plugin;
+      const storageKeys: string[] = [];
+      const storagePat = /Lampa\.Storage\.(get|set|field|add)\(\s*['"]([^'"]+)['"]/g;
+      let sm: RegExpExecArray | null;
+      while ((sm = storagePat.exec(content)) !== null) storageKeys.push(sm[2]);
+      const storagePrefixed =
+        storageKeys.length === 0 ||
+        storageKeys.every(
+          (k) =>
+            k.startsWith(pluginBase) ||
+            k.startsWith(`${plugin}_`) ||
+            k.startsWith("video_") ||
+            k.startsWith("online_")
+        );
+
+      const langHasRuEn =
+        !content.includes("Lampa.Lang.add") ||
+        (/Lang\.add\s*\(/.test(content) &&
+          /(?:ru\s*:)/.test(content) &&
+          /(?:en\s*:)/.test(content));
+
       const checks: Array<{
         name: string;
         pass: boolean;
@@ -482,28 +523,36 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
         fix: string;
       }> = [
         {
-          name: "IIFE wrapper `(function() { ... })()`",
-          pass: /\(function\s*\(/.test(content),
+          name: "IIFE or named start function wrapper",
+          pass: /\(function\s*\(/.test(content) || /function\s+start\w+\s*\(/.test(content),
           severity: "error",
-          fix: "Wrap the entire plugin in `(function() { 'use strict'; ... })();` to prevent global scope pollution.",
+          fix: "Wrap the plugin in a uniquely named start function (official docs) or an IIFE.",
         },
         {
-          name: "`'use strict'` declaration",
-          pass: content.includes("'use strict'") || content.includes('"use strict"'),
-          severity: "warn",
-          fix: "Add `'use strict';` as the first statement inside the IIFE.",
+          name: "Double-load guard (`window.<plugin>_ready`)",
+          pass: hasGuard,
+          severity: "error",
+          fix: "Set `window.my_plugin_ready = true` inside start, then `if (!window.my_plugin_ready) startMyPlugin()`.",
         },
         {
-          name: "Bootstraps on `appready`",
-          pass: content.includes("appready"),
+          name: "Bootstraps on Listener app:ready (not jQuery appready)",
+          pass:
+            listenerReady ||
+            (hasAppreadyFlag && /window\.appready/.test(content) && !jqueryAppready),
           severity: "error",
-          fix: "Use `if (window.appready) init(); else $(document).on('appready', init);` — never call Lampa APIs before the app is ready.",
+          fix: "Use `if (window.appready) init(); else Lampa.Listener.follow('app', e => { if (e.type == 'ready') init() })`.",
+        },
+        {
+          name: "Does not use outdated `$(document).on('appready')`",
+          pass: !jqueryAppready,
+          severity: "error",
+          fix: "Replace jQuery appready with Lampa.Listener.follow('app', … e.type == 'ready').",
         },
         {
           name: "No hardcoded `localhost` URLs",
           pass: !content.includes("localhost"),
           severity: "error",
-          fix: "Remove localhost URLs. Use environment-relative paths or a configurable base URL from Lampa.Storage.",
+          fix: "Remove localhost URLs. Store the server URL via SettingsApi + Storage.field().",
         },
         {
           name: "No `document.write()`",
@@ -518,38 +567,58 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
           fix: "Remove eval(). It triggers CSP violations and is a security risk.",
         },
         {
-          name: "Uses `Lampa.Lang` for UI strings",
-          pass: content.includes("Lampa.Lang"),
+          name: "Does not overwrite `window.lampa_settings`",
+          pass: !overwritesLampaSettings,
+          severity: "error",
+          fix: "Extend with `Lampa.Arrays.extend(window.lampa_settings, { … })` or set individual keys.",
+        },
+        {
+          name: "PlayerVideo listeners are removed",
+          pass: !playerVideoFollow || playerVideoRemove,
+          severity: "error",
+          fix: "Store named handlers and `PlayerVideo.listener.remove(type, fn)` inside Player:destroy.",
+        },
+        {
+          name: "Network callbacks guarded (`inited` + `network.clear`)",
+          pass: !hasNetwork || (hasInited && hasNetworkClear),
           severity: "warn",
-          fix: "Replace hardcoded UI strings with Lampa.Lang.translate('key') for i18n support.",
+          fix: "Set `inited = false` in destroy(), ignore late responses, call `network.clear()`.",
         },
         {
-          name: "Has a named `init()` function",
-          pass: /function\s+init\s*\(|var\s+init\s*=\s*function|const\s+init\s*=/.test(content),
-          severity: "info",
-          fix: "Define a clear `function init()` entry point for readability and testability.",
+          name: "TV events via jQuery `.on('hover:enter')` not addEventListener",
+          pass: !addEventListenerHover && (jqueryHover || !content.includes("hover:enter")),
+          severity: "warn",
+          fix: "Use `$(el).on('hover:enter', handler)` — native addEventListener does not receive hover:* events.",
         },
         {
-          name: "Settings icon provided",
-          pass: !content.includes("Lampa.Settings.add") || content.includes("icon:"),
-          severity: "info",
-          fix: "Add an `icon: '<svg>...</svg>'` property to your Lampa.Settings.add() call.",
+          name: "Uses SettingsApi (not Lampa.Settings.add)",
+          pass: !usesSettingsAdd || usesSettingsApi,
+          severity: "warn",
+          fix: "Prefer `Lampa.SettingsApi.addComponent` / `addParam`. Read values with `Lampa.Storage.field(key)`.",
+        },
+        {
+          name: "Lang.add includes ru and en",
+          pass: langHasRuEn,
+          severity: "warn",
+          fix: "Always pass at least `ru` and `en` in Lampa.Lang.add({ key: { ru, en } }).",
+        },
+        {
+          name: "CSS injection happens inside init()",
+          pass: !cssAppend || cssInInit,
+          severity: "warn",
+          fix: "Append plugin `<style>` templates inside init() after app:ready so app CSS is already loaded.",
         },
         {
           name: "Storage keys use plugin prefix",
-          pass: (() => {
-            const storageKeys: string[] = [];
-            const pat = /Lampa\.Storage\.get\(['"]([^'"]+)['"]/g;
-            let m: RegExpExecArray | null;
-            while ((m = pat.exec(content)) !== null) storageKeys.push(m[1]);
-            if (storageKeys.length === 0) return true;
-            const pluginBase = basename(rel, ".js").split(/[/_]/)[0];
-            return storageKeys.every(
-              (k) => k.startsWith(pluginBase) || k.startsWith("video_") || k.startsWith("online_")
-            );
-          })(),
+          pass: storagePrefixed,
           severity: "info",
-          fix: `Prefix storage keys with the plugin name (e.g. '${plugin}_key') to avoid conflicts with other plugins.`,
+          fix: `Prefix storage keys with the plugin name (e.g. '${pluginBase}_token').`,
+        },
+        {
+          name: "Uses `Lampa.Lang` for UI strings",
+          pass: content.includes("Lampa.Lang"),
+          severity: "info",
+          fix: "Replace hardcoded UI strings with Lampa.Lang.translate('key').",
         },
       ];
 
@@ -729,9 +798,11 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
             "activity",
             "player-hook",
             "maker",
+            "controller",
+            "manifest-menu",
           ])
           .describe(
-            "Pattern to explain: iife-plugin | storage | settings | events | component | request | template | activity | player-hook | maker"
+            "Pattern: iife-plugin | storage | settings | events | component | request | template | activity | player-hook | maker | controller | manifest-menu"
           ),
       },
     },
@@ -746,154 +817,173 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
 
       const patterns: Record<string, PatternMeta> = {
         "iife-plugin": {
-          title: "IIFE Plugin Pattern",
+          title: "Plugin start + app:ready Pattern",
           description:
-            "All Lampa plugins must be self-contained IIFEs that bootstrap via the `appready` DOM event. This prevents global scope pollution and ensures Lampa APIs are ready before use.",
-          searchFor: "(function()",
+            "Plugins are script-injected IIFEs/start functions using window.Lampa. Official bootstrap is Lampa.Listener app:ready, plus a unique global double-load guard.",
+          searchFor: "Listener.follow('app'",
           searchIn: "plugins",
           keyPoints: [
-            "- Wrap the entire plugin: `(function() { 'use strict'; ... })()`",
-            "- Define an `init()` function for all startup logic",
-            "- Bootstrap: `if (window.appready) init(); else $(document).on('appready', init);`",
-            "- Never call Lampa APIs outside of `init()` or event handlers",
-            "- Use `var` (not `let`/`const`) for maximum TV browser compatibility unless transpiling",
+            "- Unique guard: `window.my_plugin_ready = true` then `if (!window.my_plugin_ready) startMyPlugin()`",
+            "- Bootstrap: `if (window.appready) init(); else Lampa.Listener.follow('app', e => { if (e.type == 'ready') init() })`",
+            "- Do NOT use `$(document).on('appready', init)` — outdated and not in official docs",
+            "- Never call Activity.push, SettingsApi, or read `.menu__list` outside init()",
+            "- Folder name must match the entry filename: `plugins/my_plugin/my_plugin.js`",
           ],
         },
         storage: {
           title: "Lampa.Storage Pattern",
           description:
-            "Lampa.Storage is the primary key-value persistence API, backed by localStorage. Use it for all user preferences and plugin state that should survive across sessions.",
+            "Storage wraps localStorage with an IndexedDB cache. Prefix every key. Use Storage.field() for SettingsApi params.",
           searchFor: "Lampa.Storage.get(",
           searchIn: "plugins",
           keyPoints: [
-            "- Read: `var val = Lampa.Storage.get('my_key', defaultValue);`",
-            "- Write: `Lampa.Storage.set('my_key', value);`",
-            "- Prefix keys with plugin name: `'myplugin_setting'` to avoid collisions",
-            "- Watch changes: `Lampa.Storage.listener.follow('change', fn);`",
-            "- Values must be JSON-serializable; use JSON.stringify/parse for objects",
-            "- Default values are returned (not stored) when the key doesn't exist",
+            "- Plugin state: `Lampa.Storage.get('myplugin_token', '')` / `Storage.set(...)`",
+            "- SettingsApi params: `Lampa.Storage.field('myplugin_quality')` (applies default)",
+            "- Prefix keys: `myplugin_token` — never generic `token` / `url` / `quality`",
+            "- Watch: `Lampa.Storage.listener.follow('change', fn)` payload `{name, value}`",
+            "- Arrays: `Storage.add` / `Storage.remove`; bounded maps: `Storage.cache(key, maxSize, {})`",
           ],
         },
         settings: {
-          title: "Lampa.Settings + Lampa.SettingsApi Pattern",
+          title: "Lampa.SettingsApi Pattern",
           description:
-            "The Settings API lets plugins register their own settings panels and individual controls (toggles, selects, inputs) that appear in the Lampa settings UI.",
-          searchFor: "Lampa.Settings.add(",
+            "Plugins add a Settings section with SettingsApi.addComponent + addParam. Values persist automatically.",
+          searchFor: "SettingsApi.addComponent",
           searchIn: "plugins",
           keyPoints: [
-            "- Register a section: `Lampa.Settings.add('id', { component, name, icon })`",
-            "- Add controls via `Lampa.SettingsApi.add({ component, param, field, onChange })`",
-            "- param.type options: `'trigger'` (boolean toggle), `'select'`, `'input'`, `'button'`",
-            "- `onChange(value)` is called immediately when user changes the setting",
-            "- Read saved value: `Lampa.Storage.get(param.name, param.default)`",
-            "- Always register settings inside `init()` after app is ready",
+            "- Section: `Lampa.SettingsApi.addComponent({ component, name, icon, before/after })`",
+            "- Param: `SettingsApi.addParam({ component, param: { name, type, default }, field, onChange })`",
+            "- param.type: `'trigger'` (toggle), `'select'` (values map), `'input'`",
+            "- Read: `Lampa.Storage.field(param.name)` — not Settings.add({ items })",
+            "- Built-in section ids for before/after: interface, player, parser, server, more, account, plugins, tmdb",
+            "- Register inside init() after app:ready",
           ],
         },
         events: {
-          title: "Lampa.Listener Event Pattern",
+          title: "Event buses (Listener, Player, Storage, Favorite, Keypad)",
           description:
-            "Lampa uses a pub/sub event bus via Lampa.Listener. Plugins should prefer hooking into events over patching core functions.",
+            "Subscribe with .follow(type, namedFn) and always .remove(type, namedFn). See resource lampa://events.",
           searchFor: "Lampa.Listener.follow(",
           searchIn: "plugins",
           keyPoints: [
-            "- Listen: `Lampa.Listener.follow('event_name', function(e) { ... });`",
-            "- Emit: `Lampa.Listener.send('event_name', { type: 'action', ...data });`",
-            "- Always check `e.type` — events carry a typed payload, not just a name",
-            "- Common events: `app` (types: start/ready), `full` (complite/destroy), `player`, `catalog`",
-            "- Plugin-specific events should use unique prefixed names (e.g. `myplugin_done`)",
-            "- Use `trace_event` tool to find all files that use a given event",
+            "- App-wide: `Lampa.Listener.follow('app'|'activity'|'full'|'line'|'torrent_file', fn)`",
+            "- Player: `Lampa.Player.listener.follow('create'|'start'|'ready'|'destroy', fn)` — not Listener.follow('player')",
+            "- PlayerVideo: subscribe on start, remove on destroy (module is recreated each open)",
+            "- Store handlers in named variables — anonymous functions cannot be removed",
+            "- Private bus: `var bus = Lampa.Subscribe()`",
           ],
         },
         component: {
-          title: "Lampa Component Lifecycle Pattern",
+          title: "Component lifecycle contract",
           description:
-            "UI components follow a defined lifecycle managed by Lampa. Correct implementation of lifecycle methods is critical for back-navigation and memory management on TV hardware.",
+            "Activity calls create (must return DOM), start (focus), stop (covered), destroy (cleanup), render. Optional empty().",
           searchFor: "this.create",
           searchIn: "src/components",
           keyPoints: [
-            "- `create()` → returns a jQuery DOM element (the component's root)",
-            "- `render()` → populates the DOM after the element is attached",
-            "- `start()` → called when the component gains focus; enable controllers here",
-            "- `pause()` / `stop()` → component loses focus; stop timers",
-            "- `destroy()` → MUST clean up ALL event listeners, timers, and DOM references",
-            "- Register component: `Lampa.Component.add('name', ConstructorFn)`",
-            "- Push to navigation: `Lampa.Activity.push({ component: 'name', ... })`",
+            "- `create()` must return a DOM/jQuery root synchronously; show loader with `this.activity.loader(true)`",
+            "- `start()` — screen gained focus; register Controller.add('content', …) and toggle here",
+            "- `stop()` — another screen on top; do not destroy resources",
+            "- `destroy()` — pop: `inited=false`, `network.clear()`, `scroll.destroy()`, remove listeners",
+            "- `render()` returns the root; `empty()` uses `this.activity.empty()`",
+            "- Register: `Lampa.Component.add('name', Ctor)` then `Activity.push({ component: 'name', … })`",
           ],
         },
         request: {
           title: "Lampa.Reguest Network Pattern",
           description:
-            "Lampa.Reguest is the recommended HTTP client for plugins. It handles TV-friendly error recovery, proxy routing, and request cancellation.",
+            "jQuery-ajax wrapper with loading overlay, cancel, and error helpers. One instance per component.",
           searchFor: "new Lampa.Reguest",
           searchIn: "plugins",
           keyPoints: [
-            "- Create: `var network = new Lampa.Reguest();`",
-            "- Fetch: `network.silent(url, onSuccess, onError, options);`",
-            "- Always call `network.clear()` before a new request to cancel pending ones",
-            "- Use `component.proxy('name')` to prepend the proxy URL for CORS bypass",
-            "- `network.timeout(ms)` sets a custom timeout (default is generous for slow TVs)",
-            "- Never use `fetch()` or `$.ajax()` directly — use Lampa.Reguest for proper proxy support",
+            "- `var network = new Lampa.Reguest(); network.timeout(15000)`",
+            "- `get` shows overlay and cancels previous get; `silent` / `quiet` / `last` / `native` variants",
+            "- Guard late callbacks with `inited`; `network.clear()` in destroy()",
+            "- Errors: `network.errorDecode(jqXHR, exception)` + Noty",
+            "- Note the class name is `Reguest` (historical spelling)",
           ],
         },
         template: {
-          title: "Lampa.Template Pattern",
+          title: "Lampa.Template + Lang Pattern",
           description:
-            "Templates are named HTML strings registered centrally. Plugins retrieve DOM elements via the template system, keeping HTML out of JS strings.",
-          searchFor: "Lampa.Template.get(",
+            "Named HTML strings with `{key}` data placeholders and `#{lang_key}` i18n. CSS via a <style> template appended in init().",
+          searchFor: "Lampa.Template.add(",
           searchIn: "plugins",
           keyPoints: [
-            "- Register: `Lampa.Template.add('my_tpl', '<div class=\"...\">{title}</div>')`",
-            "- Retrieve DOM: `var el = Lampa.Template.get('my_tpl', { title: movie.title });`",
-            "- Placeholders use `{key}` syntax in the HTML string",
-            "- Templates in src/templates/*.js are auto-registered by the app",
-            "- Use `list_templates` with mode=html (or alias `extract_template_html`) to inspect existing template HTML",
-            "- Register templates early (inside `init()`) before any component creates them",
+            "- `Lampa.Template.add('my_card', '<div>{title} #{my_label}</div>')`",
+            "- `Template.get(name, data)` → jQuery clone; third arg `true` → raw HTML string",
+            "- `Lampa.Lang.add({ my_key: { ru: '…', en: '…' } })` — always include ru and en",
+            "- Inject CSS inside init(): `$('body').append(Template.get('my_css', {}, true))`",
+            "- Built-in plugins may `@@include('../plugins/name/css/style.css')` at Gulp time",
           ],
         },
         activity: {
           title: "Lampa.Activity Navigation Pattern",
           description:
-            "Lampa.Activity manages the navigation stack — the back-button history essential for TV remote control. Every screen push creates an activity entry.",
+            "Stack navigation. Activity.push adds a screen; back pops. Extra keys on the object become the component constructor argument.",
           searchFor: "Lampa.Activity.push",
           searchIn: "plugins",
           keyPoints: [
-            "- Push screen: `Lampa.Activity.push({ url, title, component: 'name', object: data })`",
-            "- The activity stack drives remote back-button behavior",
-            "- Each activity gets `activity.view` (jQuery element) after creation",
-            "- Go back: `Lampa.Activity.backward()`",
-            "- Listen to changes: `Lampa.Activity.listener.follow('activity', fn)`",
-            "- Never push multiple activities without user interaction — it breaks back-nav",
+            "- `Activity.push({ url, title, component, page, …custom })`",
+            "- `Activity.replace(params)` updates current without a new history entry",
+            "- `Activity.backward()` / `Activity.active()`",
+            "- Listen: `Lampa.Listener.follow('activity', fn)` — not Activity.listener",
+            "- Named routes: `Lampa.Router.call('full'|'category'|'actor', data)`",
           ],
         },
         "player-hook": {
-          title: "Player Hook Pattern",
+          title: "Player + PlayerVideo Hook Pattern",
           description:
-            "Hooking into the player lifecycle allows plugins to extend playback, track watch time, inject overlay UI, or modify streams before they play.",
-          searchFor: "Lampa.Listener.follow('player'",
+            "Use Player.listener for lifecycle and PlayerVideo.listener for the media element. Clean up on destroy.",
+          searchFor: "Player.listener.follow",
           searchIn: "plugins",
           keyPoints: [
-            "- `Lampa.Listener.follow('player', function(e) { ... })` — hook the player",
-            "- Event types: `start`, `end`, `pause`, `resume`, `destroy`, `timeupdate`",
-            "- Access the player instance via `e.object`",
-            "- For UI injection: inject on `start`, clean up on `destroy`",
-            "- Use `Lampa.Listener.follow('torrent_file', fn)` for torrent player events",
-            "- Avoid heavy computation in `timeupdate` — it fires very frequently",
+            "- `Lampa.Player.listener.follow('start', onStart)` — not Listener.follow('player')",
+            "- `create` can `data.abort()`; `destroy` must remove all PlayerVideo handlers",
+            "- PlayerVideo events: canplay, timeupdate, ended, error, tracks, subs, levels, webos_*",
+            "- Enriched tracks: `Lampa.PlayerPanel.setTracks` / `setSubs`",
+            "- Torrent playback: `data.torrent_hash` and `data.id` on start",
           ],
         },
         maker: {
           title: "Lampa.Maker Modular Component Pattern (3.0)",
           description:
-            "Lampa 3.0 replaced monolithic Interaction* classes with composable Maker modules. Each UI class (Main, Card, Category, Line, etc.) has toggleable behavior modules controlled via MaskHelper bitmasks.",
+            "Lampa 3.0 replaced monolithic Interaction* classes with composable Maker modules. See UPGRADE.md and maker_module_map.",
           searchFor: "Lampa.Maker.make(",
           searchIn: "src",
           keyPoints: [
             "- Create: `Lampa.Maker.make('Main', data, (m) => m.toggle(m.MASK.base, 'Callback'))`",
-            "- Get class: `Lampa.Maker.get('Main')` then `new classMain(data)`",
-            "- Configure modules: `Lampa.Maker.module('Main').only('Create')` or `.toggle(MASK, 'Name')`",
-            "- Override hooks: `Lampa.Maker.map('Main').Create.onCreateAndAppend = fn`",
-            "- List classes: `Lampa.Maker.list()` — Card, Main, Category, Line, Episode, Season, Person, etc.",
-            "- Deprecated: `Lampa.Card`, `Lampa.InteractionMain`, `InteractionCategory`, `InteractionLine`",
-            "- Use `maker_module_map` and `upgrade_migration_checker` tools for full reference",
+            "- Guard: `if (Lampa.Manifest.app_digital >= 300)` before Maker APIs",
+            "- Deprecated: `Lampa.Card`, `InteractionMain`, `InteractionCategory`, `InteractionLine`",
+            "- Use `maker_module_map` and `upgrade_migration_checker` for full reference",
+          ],
+        },
+        controller: {
+          title: "Controller & TV navigation",
+          description:
+            "One named controller owns the remote at a time. Elements with class selector are focusable. Source: docs/en/13-controller.md.",
+          searchFor: "Controller.add(",
+          searchIn: "src",
+          keyPoints: [
+            "- Register in start(): `Lampa.Controller.add('content', { toggle, left, right, up, down, back })`",
+            "- `toggle` should `collectionSet(html)` and `collectionFocus(last || false, html)`",
+            "- Then `Lampa.Controller.toggle('content')`",
+            "- Use jQuery `el.on('hover:enter'|'hover:focus'|'hover:long', …)` — not addEventListener",
+            "- After Select/Modal onBack: `Controller.toggle('content')` to restore focus",
+            "- Global hotkeys: `Lampa.Keypad.listener.follow` — remove in destroy()",
+          ],
+        },
+        "manifest-menu": {
+          title: "Manifest context menu & sidebar",
+          description:
+            "type:'video' manifests appear on long-press card menus. Sidebar items are appended to .menu__list.",
+          searchFor: "Manifest.plugins",
+          searchIn: "plugins",
+          keyPoints: [
+            "- `Lampa.Manifest.plugins = { type:'video', onContextMenu, onContextLauch }`",
+            "- Setter appends; multiple plugins each get a menu entry",
+            "- IMDb id is fetched before onContextLauch when registered via the setter",
+            "- Sidebar: `$('.menu .menu__list').eq(0).append(btn)` with `hover:enter` → Activity.push",
+            "- Re-add component if needed: `if (!Component.get(name)) Component.add(name, Ctor)`",
           ],
         },
       };

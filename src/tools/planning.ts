@@ -25,7 +25,7 @@ async function buildSuggestedTargets(fs: RepoFs, request: string): Promise<strin
     `- Prefer modifying the most specific file (deepest path) rather than shared core`,
     `- Hook into existing Lampa.Event listeners before adding new ones`,
     `- Extend plugin entry points (main.js in plugin folder) rather than core files`,
-    `- Add settings via Lampa.Settings.add() in the plugin's main.js init`,
+    `- Add settings via Lampa.SettingsApi.addComponent / addParam in init() after app:ready`,
   ].join("\n");
 }
 

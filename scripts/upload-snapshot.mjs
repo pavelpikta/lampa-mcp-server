@@ -148,7 +148,7 @@ const manifest = {
 
 const storageHits = extractRegexIndex(
   files,
-  String.raw`Lampa\.Storage\.(get|set|cache)\(\s*['"]([^'"]+)['"]`,
+  String.raw`Lampa\.Storage\.(get|set|cache|field)\(\s*['"]([^'"]+)['"]`,
   (rel, m) => ({ file: rel, op: m[1], key: m[2] })
 );
 const eventHits = [
@@ -161,6 +161,26 @@ const eventHits = [
     files,
     String.raw`Player\.listener\.(follow|send)\(\s*['"]([^'"]+)['"]`,
     (rel, m) => ({ file: rel, op: m[1], event: m[2], bus: "Player" })
+  ),
+  ...extractRegexIndex(
+    files,
+    String.raw`PlayerVideo\.listener\.(follow|send|remove)\(\s*['"]([^'"]+)['"]`,
+    (rel, m) => ({ file: rel, op: m[1], event: m[2], bus: "PlayerVideo" })
+  ),
+  ...extractRegexIndex(
+    files,
+    String.raw`Storage\.listener\.(follow|send)\(\s*['"]([^'"]+)['"]`,
+    (rel, m) => ({ file: rel, op: m[1], event: m[2], bus: "Storage" })
+  ),
+  ...extractRegexIndex(
+    files,
+    String.raw`Favorite\.listener\.(follow|send)\(\s*['"]([^'"]+)['"]`,
+    (rel, m) => ({ file: rel, op: m[1], event: m[2], bus: "Favorite" })
+  ),
+  ...extractRegexIndex(
+    files,
+    String.raw`Keypad\.listener\.(follow|send)\(\s*['"]([^'"]+)['"]`,
+    (rel, m) => ({ file: rel, op: m[1], event: m[2], bus: "Keypad" })
   ),
 ];
 const settingsHits = [
@@ -185,6 +205,35 @@ const apiHits = extractRegexIndex(
   }
 );
 
+const pluginDocHits = [];
+for (const rel of files) {
+  if (!/^docs\/(en|ru)\//.test(rel) || !rel.endsWith(".md")) continue;
+  const abs = path.join(repoPath, rel);
+  let content;
+  try {
+    content = readFileSync(abs, "utf8");
+  } catch {
+    continue;
+  }
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const heading = lines[i].match(/^(#{1,3})\s+(.+)$/);
+    if (!heading) continue;
+    pluginDocHits.push({
+      file: rel,
+      heading: heading[2].trim(),
+      level: heading[1].length,
+      line: i + 1,
+      preview: lines
+        .slice(i, Math.min(lines.length, i + 4))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 220),
+    });
+  }
+}
+
 /** @type {Record<string, unknown>} */
 const indexes = {
   "storage-schema": {
@@ -195,7 +244,7 @@ const indexes = {
   events: {
     generatedAt: manifest.generatedAt,
     hits: eventHits,
-    note: "Precomputed Listener/Player event follow/send references",
+    note: "Precomputed Listener / Player / PlayerVideo / Storage / Favorite / Keypad events",
   },
   "settings-catalog": {
     generatedAt: manifest.generatedAt,
@@ -206,6 +255,11 @@ const indexes = {
     generatedAt: manifest.generatedAt,
     hits: apiHits,
     note: "Precomputed API/network call patterns",
+  },
+  "plugin-docs": {
+    generatedAt: manifest.generatedAt,
+    hits: pluginDocHits,
+    note: "Headings from official plugin docs (docs/en, docs/ru)",
   },
 };
 
