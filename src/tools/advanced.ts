@@ -477,9 +477,11 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
 
       const jqueryAppready = /\$\(\s*document\s*\)\.on\(\s*['"]appready['"]/.test(content);
       const listenerReady =
-        /Listener\.follow\(\s*['"]app['"]/.test(content) && /e\.type\s*==\s*['"]ready['"]/.test(content);
+        /Listener\.follow\(\s*['"]app['"]/.test(content) &&
+        /e\.type\s*==\s*['"]ready['"]/.test(content);
       const hasAppreadyFlag = /\bwindow\.appready\b/.test(content) || /\bappready\b/.test(content);
-      const hasGuard = /window\.\w+_ready/.test(content) && /if\s*\(\s*!window\.\w+_ready/.test(content);
+      const hasGuard =
+        /window\.\w+_ready/.test(content) && /if\s*\(\s*!window\.\w+_ready/.test(content);
       const usesSettingsAdd = /Lampa\.Settings\.add\s*\(/.test(content);
       const usesSettingsApi = /SettingsApi\.add(Component|Param)\s*\(/.test(content);
       const overwritesLampaSettings = /window\.lampa_settings\s*=\s*\{/.test(content);
@@ -534,7 +536,9 @@ export function registerAdvancedTools(server: McpServer, config: Config): void {
         },
         {
           name: "Bootstraps on Listener app:ready (not jQuery appready)",
-          pass: listenerReady || (hasAppreadyFlag && /window\.appready/.test(content) && !jqueryAppready),
+          pass:
+            listenerReady ||
+            (hasAppreadyFlag && /window\.appready/.test(content) && !jqueryAppready),
           severity: "error",
           fix: "Use `if (window.appready) init(); else Lampa.Listener.follow('app', e => { if (e.type == 'ready') init() })`.",
         },

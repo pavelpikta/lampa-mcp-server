@@ -334,7 +334,10 @@ export function registerValidationTools(server: McpServer, config: Config): void
         const extraHits: string[] = [];
         for (let i = 0; i < lines.length; i++) {
           if (lines[i].toLowerCase().includes(topic.toLowerCase())) {
-            const ctx = lines.slice(Math.max(0, i - 1), i + 3).join("\n").trim();
+            const ctx = lines
+              .slice(Math.max(0, i - 1), i + 3)
+              .join("\n")
+              .trim();
             if (ctx.length > 5) extraHits.push(`L${i + 1}: ${ctx.slice(0, 200)}`);
           }
         }
@@ -347,7 +350,9 @@ export function registerValidationTools(server: McpServer, config: Config): void
       if (sections.length === 0 && (await fileExists(config.fs, jsdoc))) {
         const content = (await readFileSafe(config.fs, jsdoc)) ?? "";
         if (content.toLowerCase().includes(topic.toLowerCase())) {
-          sections.push(`### generated JSDoc (${jsdoc})\nMatch found; strip HTML via docs://index.`);
+          sections.push(
+            `### generated JSDoc (${jsdoc})\nMatch found; strip HTML via docs://index.`
+          );
         }
       }
 

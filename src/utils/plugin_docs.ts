@@ -195,7 +195,9 @@ export async function readPluginChapter(
 ): Promise<{ path: string; text: string } | null> {
   const meta = resolveChapter(chapter);
   const dir = pluginDocsDir(pluginDocsPath, lang);
-  const file = meta ? joinRepo(dir, meta.file) : joinRepo(dir, chapter.endsWith(".md") ? chapter : `${chapter}.md`);
+  const file = meta
+    ? joinRepo(dir, meta.file)
+    : joinRepo(dir, chapter.endsWith(".md") ? chapter : `${chapter}.md`);
   if (!(await fileExists(fs, file))) return null;
   const text = await readFileSafe(fs, file);
   if (!text) return null;
@@ -246,9 +248,7 @@ export async function searchPluginDocs(
 
 export function formatDocHits(hits: PluginDocHit[]): string {
   if (hits.length === 0) return "";
-  return hits
-    .map((h) => `### ${h.file}:${h.line} — ${h.heading}\n${h.preview}`)
-    .join("\n\n");
+  return hits.map((h) => `### ${h.file}:${h.line} — ${h.heading}\n${h.preview}`).join("\n\n");
 }
 
 /** Condensed event tables from docs/en/03-events.md (stable; not a full chapter dump). */
