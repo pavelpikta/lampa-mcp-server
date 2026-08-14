@@ -65,6 +65,8 @@ export const LAMPA_FEATURE_MAP: Record<string, string[]> = {
 };
 
 export const LAMPA_LANDMARKS: { path: string; role: string }[] = [
+  { path: "docs/en/README.md", role: "Official plugin development guide (TOC + cheatsheet)" },
+  { path: "docs/en/11-pitfalls.md", role: "Plugin anti-patterns agents must not emit" },
   { path: "src/app.js", role: "Bootstrap, window.Lampa export, boot sequence" },
   { path: "UPGRADE.md", role: "v3 Maker/params migration bible" },
   { path: "src/core/manifest.js", role: "Version, CUB domains/mirrors" },
@@ -110,8 +112,11 @@ export const LAMPA_EDIT_RULES = `# Lampa edit rules
 
 ## Plugin conventions
 - Plugins are runtime-loaded scripts using global \`Lampa.*\` (not ES imports into the app)
+- Guard: \`window.<plugin>_ready\` + \`if (!window.<plugin>_ready) start…()\`
+- Bootstrap: \`if (window.appready) init(); else Lampa.Listener.follow('app', e => { if (e.type == 'ready') init() })\`
+- Settings: \`SettingsApi.addComponent\` / \`addParam\`; read with \`Storage.field()\`
 - Prefer v3: \`Maker\`, \`SettingsApi\`, \`ContentRows\`, \`Listener.follow\`
-- Avoid deprecated: \`InteractionMain\`, \`InteractionCategory\`, \`InteractionLine\`, flat \`Lampa.Card\` (see UPGRADE.md)
+- Avoid: \`$(document).on('appready')\`, \`Lampa.Settings.add\`, \`InteractionMain\` / \`InteractionCategory\` / \`InteractionLine\`, flat \`Lampa.Card\` (see UPGRADE.md and \`docs/en/11-pitfalls.md\`)
 `;
 
 export const LAMPA_API_SURFACE_KEYS = [
@@ -374,7 +379,9 @@ export async function detectRisks(fs: RepoFs, files: string[]): Promise<string[]
 export async function findSettingsInRepo(fs: RepoFs, keyword?: string): Promise<string> {
   const patterns = [
     "Lampa.Settings.add",
-    "SettingsApi.add",
+    "SettingsApi.addComponent",
+    "SettingsApi.addParam",
+    "Lampa.SettingsApi.add",
     "Lampa.Settings.get",
     "Lampa.Storage.get",
     "Lampa.Storage.set",

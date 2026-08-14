@@ -98,6 +98,280 @@ function buildUnifiedDiffSuggestion(file: string, content: string, request: stri
   ].join("\n");
 }
 
+function pascalName(pluginName: string): string {
+  return pluginName
+    .split(/[_-]/)
+    .filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join("");
+}
+
+function buildOfficialScaffold(
+  pluginName: string,
+  description: string,
+  kind: "screen" | "player" | "context-menu" | "settings-only"
+): string {
+  const cssClass = pluginName.replace(/_/g, "-");
+  const displayName = pluginName.replace(/_/g, " ");
+  const pascal = pascalName(pluginName);
+  const flag = `${pluginName}_ready`;
+  const componentId = `${pluginName}_screen`;
+  const startFn = `start${pascal}`;
+
+  const langBlock = `    Lampa.Lang.add({
+        ${pluginName}_title: { ru: '${displayName}', en: '${displayName}' },
+        ${pluginName}_settings: { ru: 'Настройки ${displayName}', en: '${displayName} settings' },
+        ${pluginName}_enabled: { ru: 'Включить', en: 'Enable' }
+    })`;
+
+  const cssBlock = `    Lampa.Template.add('${pluginName}_css', \`
+        <style>
+            .${cssClass} { padding: 1em; }
+        </style>
+    \`)
+    $('body').append(Lampa.Template.get('${pluginName}_css', {}, true))`;
+
+  const settingsBlock = `    Lampa.SettingsApi.addComponent({
+        component: '${pluginName}',
+        name: Lampa.Lang.translate('${pluginName}_settings'),
+        icon: '<svg width="44" height="44" viewBox="0 0 44 44"></svg>'
+    })
+    Lampa.SettingsApi.addParam({
+        component: '${pluginName}',
+        param: { name: '${pluginName}_enabled', type: 'trigger', default: true },
+        field: { name: Lampa.Lang.translate('${pluginName}_enabled') }
+    })`;
+
+  const boot = `    if (window.appready) init()
+    else Lampa.Listener.follow('app', function(e) {
+        if (e.type == 'ready') init()
+    })`;
+
+  let body: string;
+
+  if (kind === "settings-only") {
+    body = `${langBlock}
+
+    function init() {
+${cssBlock}
+
+${settingsBlock}
+    }
+
+${boot}`;
+  } else if (kind === "player") {
+    body = `${langBlock}
+
+    function onPlayerStart(data) {
+        var inited = true
+
+        function onEnded() {
+            if (!inited) return
+            console.log('${pascal}', 'ended', data.title)
+        }
+
+        function onDestroy() {
+            inited = false
+            Lampa.PlayerVideo.listener.remove('ended', onEnded)
+            Lampa.Player.listener.remove('destroy', onDestroy)
+        }
+
+        Lampa.PlayerVideo.listener.follow('ended', onEnded)
+        Lampa.Player.listener.follow('destroy', onDestroy)
+    }
+
+    function init() {
+${cssBlock}
+
+${settingsBlock}
+
+        Lampa.Player.listener.follow('start', onPlayerStart)
+    }
+
+${boot}`;
+  } else if (kind === "context-menu") {
+    body = `${langBlock}
+
+    function ${pascal}Screen(object) {
+        var html = Lampa.Template.get('${pluginName}_main', { title: object.title || '' })
+        var network = new Lampa.Reguest()
+        var inited = false
+
+        this.create = function() {
+            inited = true
+            this.activity.loader(false)
+            return this.render()
+        }
+        this.start = function() {
+            Lampa.Controller.add('content', {
+                toggle: function() {
+                    Lampa.Controller.collectionSet(html)
+                    Lampa.Controller.collectionFocus(false, html)
+                },
+                back: function() { Lampa.Activity.backward() }
+            })
+            Lampa.Controller.toggle('content')
+        }
+        this.stop = function() {}
+        this.destroy = function() {
+            inited = false
+            network.clear()
+            html.remove()
+        }
+        this.render = function() { return html }
+    }
+
+    var manifest = {
+        type: 'video',
+        version: '1.0.0',
+        name: '${displayName}',
+        description: '${description}',
+        onContextMenu: function() {
+            return { name: Lampa.Lang.translate('${pluginName}_title'), description: '' }
+        },
+        onContextLauch: function(card) {
+            if (!Lampa.Component.get('${componentId}')) {
+                Lampa.Component.add('${componentId}', ${pascal}Screen)
+            }
+            Lampa.Activity.push({
+                url: '',
+                title: Lampa.Lang.translate('${pluginName}_title'),
+                component: '${componentId}',
+                movie: card,
+                search: card.title,
+                search_two: card.original_title,
+                page: 1
+            })
+        }
+    }
+
+    function init() {
+        Lampa.Template.add('${pluginName}_main', \`
+            <div class="${cssClass} selector">
+                <div class="${cssClass}__title">{title}</div>
+            </div>
+        \`)
+${cssBlock}
+
+        Lampa.Component.add('${componentId}', ${pascal}Screen)
+        Lampa.Manifest.plugins = manifest
+${settingsBlock}
+    }
+
+${boot}`;
+  } else {
+    body = `${langBlock}
+
+    Lampa.Template.add('${pluginName}_main', \`
+        <div class="${cssClass}">
+            <div class="${cssClass}__title">{title}</div>
+        </div>
+    \`)
+
+    function ${pascal}Screen(object) {
+        var network = new Lampa.Reguest()
+        var scroll = new Lampa.Scroll({ mask: true, over: true })
+        var html = Lampa.Template.get('${pluginName}_main', {
+            title: Lampa.Lang.translate('${pluginName}_title')
+        })
+        var inited = false
+        var last = false
+
+        this.create = function() {
+            inited = true
+            this.activity.loader(true)
+            scroll.append(html)
+            this.activity.loader(false)
+            return this.render()
+        }
+
+        this.start = function() {
+            Lampa.Controller.add('content', {
+                toggle: function() {
+                    Lampa.Controller.collectionSet(scroll.render())
+                    Lampa.Controller.collectionFocus(last || false, scroll.render())
+                },
+                left: function() { Lampa.Controller.toggle('menu') },
+                right: function() { Navigator.move('right') },
+                up: function() { if (Navigator.canmove('up')) Navigator.move('up') },
+                down: function() { if (Navigator.canmove('down')) Navigator.move('down') },
+                back: function() { Lampa.Activity.backward() }
+            })
+            Lampa.Controller.toggle('content')
+        }
+
+        this.stop = function() {}
+
+        this.destroy = function() {
+            inited = false
+            network.clear()
+            scroll.destroy()
+            html.remove()
+        }
+
+        this.render = function() { return scroll.render() }
+
+        this.empty = function() {
+            this.activity.loader(false)
+            this.activity.empty()
+        }
+    }
+
+    function init() {
+${cssBlock}
+
+        Lampa.Component.add('${componentId}', ${pascal}Screen)
+${settingsBlock}
+
+        var btn = $('<li class="menu__item selector"><div class="menu__text">' +
+            Lampa.Lang.translate('${pluginName}_title') + '</div></li>')
+        btn.on('hover:enter', function() {
+            Lampa.Activity.push({
+                url: '',
+                title: Lampa.Lang.translate('${pluginName}_title'),
+                component: '${componentId}',
+                page: 1
+            })
+        })
+        $('.menu .menu__list').eq(0).append(btn)
+    }
+
+${boot}`;
+  }
+
+  return `# Plugin scaffold: plugins/${pluginName}/  (kind: ${kind})
+
+Official pattern: unique global guard, \`Lampa.Listener\` app:ready (not jQuery appready),
+SettingsApi, Lang ru+en, CSS inside init(), Controller.add + toggle.
+
+Place entry at \`plugins/${pluginName}/${pluginName}.js\` (folder name = filename).
+
+## plugins/${pluginName}/${pluginName}.js
+\`\`\`javascript
+function ${startFn}() {
+    window.${flag} = true
+
+${body}
+}
+
+if (!window.${flag}) ${startFn}()
+\`\`\`
+
+## plugins/${pluginName}/css/style.css
+\`\`\`css
+.${cssClass} {
+  display: flex;
+  flex-direction: column;
+}
+\`\`\`
+
+Built-in plugins: Gulp may \`@@include('../plugins/${pluginName}/css/style.css')\` into the style template.
+External plugins: keep CSS in the Template.add string as above.
+
+Validate with \`validate_plugin\`. See \`lampa://plugin-guide\` and \`lampa://pitfalls\`.
+`;
+}
+
 export function registerEditingTools(server: McpServer, config: Config): void {
   // ── draft_patch ────────────────────────────────────────────────────────────
   server.registerTool(
@@ -150,10 +424,10 @@ export function registerEditingTools(server: McpServer, config: Config): void {
         `## Patch guidance`,
         `Based on Lampa conventions:`,
         ``,
-        `1. **Plugin entry point pattern** (if adding a plugin): use \`scaffold_plugin_integration\`.`,
-        `2. **Settings:** \`Lampa.Settings.add(...)\` / \`SettingsApi.add(...)\``,
-        `3. **Storage:** \`Lampa.Storage.get/set\``,
-        `4. **Events:** \`Lampa.Listener.follow\` / \`Lampa.Listener.send\``,
+        `1. **Plugin entry:** \`scaffold_plugin_integration\` (official guard + Listener appready + SettingsApi).`,
+        `2. **Settings:** \`Lampa.SettingsApi.addComponent\` / \`addParam\`; read with \`Lampa.Storage.field(key)\`.`,
+        `3. **Storage:** prefix keys; \`Storage.get/set\` for plugin state, \`Storage.field\` for SettingsApi params.`,
+        `4. **Events:** \`Lampa.Listener.follow('app', …)\` for ready; \`Player.listener\` / \`PlayerVideo.listener\` for playback.`,
         ``,
         `> ⚠ Guided draft only. Read the full anchor region with \`read_file_segment\` and adapt to surrounding style.`,
       ]
@@ -169,12 +443,12 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     "insert_hook",
     {
       description:
-        "Find the best Lampa.Listener / Player.listener hook point for a trigger. Searches live code plus recommended patterns.",
+        "Find the best Lampa.Listener / Player.listener / PlayerVideo / Storage / Favorite / Keypad hook for a trigger. Official plugin-docs catalog plus live code hits.",
       inputSchema: {
         trigger: z
           .string()
           .describe(
-            "The event or lifecycle moment, e.g. 'player start', 'card render', 'settings open'."
+            "The event or lifecycle moment, e.g. 'player start', 'app ready', 'card full', 'storage change'."
           ),
       },
     },
@@ -190,84 +464,105 @@ export function registerEditingTools(server: McpServer, config: Config): void {
       const searchPatterns = [
         "Lampa.Listener.follow",
         "Player.listener.follow",
-        "Lampa.Listener.send",
+        "PlayerVideo.listener.follow",
+        "Storage.listener.follow",
+        "Favorite.listener.follow",
+        "Keypad.listener.follow",
       ];
 
       const liveHits: string[] = [];
-      for (const pat of searchPatterns) {
-        const withKeyword = await searchCode(config.fs, keyword, ["*.js"], false, "src");
-        const base = await searchCode(config.fs, pat, ["*.js"], false, "src");
-        const pluginBase = await searchCode(config.fs, pat, ["*.js"], false, "plugins");
-
-        const related = [...withKeyword, ...base, ...pluginBase].filter(
-          (m) =>
-            (m.text.includes("Listener.follow") ||
-              m.text.includes("listener.follow") ||
-              m.text.includes("Listener.send")) &&
-            (m.text.toLowerCase().includes(keyword.toLowerCase()) ||
-              lower.split(/\s+/).some((w) => w.length > 3 && m.text.toLowerCase().includes(w)))
-        );
-
-        for (const m of related.slice(0, 8)) {
-          const line = `${m.file}:${m.line}  ${m.text}`;
-          if (!liveHits.includes(line)) liveHits.push(line);
-        }
-      }
-
-      // Fallback broader search if keyword filter was too tight
-      if (liveHits.length === 0) {
-        for (const pat of searchPatterns) {
-          const hits = [
-            ...(await searchCode(config.fs, pat, ["*.js"], false, "src")),
-            ...(await searchCode(config.fs, pat, ["*.js"], false, "plugins")),
-          ];
-          for (const m of hits.slice(0, 5)) {
+      const prefixes = ["src", "plugins"] as const;
+      for (const prefix of prefixes) {
+        const withKeyword = await searchCode(config.fs, keyword, ["*.js"], false, prefix);
+        for (const m of withKeyword) {
+          if (
+            !/listener\.follow|Listener\.follow|Listener\.send/i.test(m.text) &&
+            !lower.split(/\s+/).some((w) => w.length > 3 && m.text.toLowerCase().includes(w))
+          ) {
+            continue;
+          }
+          if (
+            /listener\.follow|Listener\.follow|Listener\.send/i.test(m.text) ||
+            m.text.toLowerCase().includes(keyword.toLowerCase())
+          ) {
             const line = `${m.file}:${m.line}  ${m.text}`;
             if (!liveHits.includes(line)) liveHits.push(line);
           }
         }
       }
 
+      if (liveHits.length === 0) {
+        for (const pat of searchPatterns) {
+          for (const prefix of prefixes) {
+            const hits = await searchCode(config.fs, pat, ["*.js"], false, prefix);
+            for (const m of hits.slice(0, 5)) {
+              const line = `${m.file}:${m.line}  ${m.text}`;
+              if (!liveHits.includes(line)) liveHits.push(line);
+            }
+          }
+        }
+      }
+
       const eventMap: Array<{ keywords: string[]; event: string; description: string }> = [
         {
-          keywords: ["player", "play", "video"],
-          event: "Lampa.Listener.follow('player', fn)  // or Player.listener.follow",
-          description: "Player lifecycle: start, end, pause, resume, destroy",
+          keywords: ["app", "ready", "init", "boot"],
+          event:
+            "if (window.appready) init(); else Lampa.Listener.follow('app', e => { if (e.type == 'ready') init() })",
+          description:
+            "App fully initialized. Do NOT use $(document).on('appready'). UI/Settings/Menu/Player are only safe after app:ready.",
         },
         {
-          keywords: ["card", "render", "full"],
+          keywords: ["player", "play", "video", "playback"],
+          event: "Lampa.Player.listener.follow('start'|'create'|'ready'|'destroy'|'external', fn)",
+          description:
+            "Player lifecycle. Subscribe to PlayerVideo inside start; remove every PlayerVideo handler in destroy. create can data.abort().",
+        },
+        {
+          keywords: ["canplay", "timeupdate", "ended", "tracks", "subs", "subtitle"],
+          event: "Lampa.PlayerVideo.listener.follow('canplay'|'timeupdate'|'ended'|…, namedFn)",
+          description:
+            "Video element events. Module is recreated each open — always .remove(type, namedFn) on Player:destroy.",
+        },
+        {
+          keywords: ["card", "full", "detail"],
           event: "Lampa.Listener.follow('full', fn)",
-          description: "Full card view lifecycle: create, complite, destroy",
+          description: "Card detail (full-info) page lifecycle.",
         },
         {
-          keywords: ["settings", "open", "menu"],
-          event: "Lampa.Listener.follow('settings', fn)",
-          description: "Settings panel events",
+          keywords: ["activity", "navigate", "route", "screen"],
+          event: "Lampa.Listener.follow('activity', fn)",
+          description:
+            "Navigation stack. e.type: create | init | start | destroy | archive. Not Activity.listener.",
         },
         {
-          keywords: ["app", "ready", "init", "start"],
-          event: "$(document).on('appready', fn)",
-          description: "App fully initialized",
-        },
-        {
-          keywords: ["catalog", "feed", "list"],
-          event: "Lampa.Listener.follow('catalog', fn)",
-          description: "Catalog/feed events",
-        },
-        {
-          keywords: ["activity", "navigate", "route"],
-          event: "Lampa.Activity.listener.follow('activity', fn)",
-          description: "Navigation stack changes",
+          keywords: ["line", "row", "catalog", "feed"],
+          event: "Lampa.Listener.follow('line', fn)",
+          description: "Horizontal content-row events.",
         },
         {
           keywords: ["torrent", "magnet"],
-          event: "Lampa.Listener.follow('torrent', fn)",
-          description: "Torrent-related events",
+          event: "Lampa.Listener.follow('torrent'|'torrent_file', fn)",
+          description: "Torrent search / file list (list_open, list_close, render).",
         },
         {
           keywords: ["storage", "save", "load"],
           event: "Lampa.Storage.listener.follow('change', fn)",
-          description: "Storage change events",
+          description: "Storage writes. Payload {name, value}. Prefix plugin keys.",
+        },
+        {
+          keywords: ["favorite", "bookmark", "like", "wath", "history"],
+          event: "Lampa.Favorite.listener.follow('add'|'added'|'remove', fn)",
+          description: "Bookmark categories. e.where is like | wath | history | book.",
+        },
+        {
+          keywords: ["key", "remote", "keypad", "hotkey"],
+          event: "Lampa.Keypad.listener.follow('keydown'|'left'|'enter'|…, namedFn)",
+          description: "Global remote keys. Always remove in destroy — not scoped to a component.",
+        },
+        {
+          keywords: ["settings", "menu"],
+          event: "Lampa.SettingsApi.addComponent / addParam  (register in init after app:ready)",
+          description: "Settings UI is not a Listener event. Register sections with SettingsApi.",
         },
       ];
 
@@ -279,19 +574,19 @@ export function registerEditingTools(server: McpServer, config: Config): void {
       }
       if (recommended.length === 0) {
         recommended.push(
-          `No static recommendation matched "${trigger}". Prefer live hits below, or search \`Lampa.Listener\` / \`Player.listener\`.`
+          `No catalog match for "${trigger}". See resource \`lampa://events\` or search \`Lampa.Listener\` / \`Player.listener\`.`
         );
       }
 
       const text = [
         `# Hook insertion for: "${trigger}"`,
         ``,
-        `## Recommended pattern`,
+        `## Recommended pattern (plugin docs)`,
         recommended.join("\n\n"),
         ``,
         `## Live code hits (keyword: "${keyword}")`,
         liveHits.slice(0, 20).join("\n") ||
-          "No matching Listener.follow / Listener.send / Player.listener.follow hits.",
+          "No matching Listener.follow / listener.follow hits. Narrow the trigger or use search_code with prefix=src.",
       ].join("\n");
 
       return { content: [{ type: "text" as const, text }] };
@@ -302,75 +597,83 @@ export function registerEditingTools(server: McpServer, config: Config): void {
   server.registerTool(
     "add_setting",
     {
-      description: "Generate the boilerplate to add a new setting to Lampa's settings panel.",
+      description:
+        "Generate SettingsApi boilerplate (addComponent + addParam). Uses Storage.field() for reads. Prefer over Lampa.Settings.add.",
       inputSchema: {
-        key: z.string().describe("Storage key for the setting, e.g. 'my_plugin_enabled'."),
+        key: z.string().describe("Storage key, e.g. 'myplugin_enabled'. Prefix with plugin name."),
         label: z.string().describe("Human-readable label shown in the UI."),
-        type: z.enum(["toggle", "select", "input"]).describe("Setting type."),
+        type: z
+          .enum(["toggle", "select", "input", "trigger"])
+          .describe("Setting type. toggle is an alias of trigger."),
         default_value: z.string().optional().describe("Default value."),
         options: z.array(z.string()).optional().describe("Options for 'select' type."),
+        component: z
+          .string()
+          .optional()
+          .describe("Settings section id. Defaults to the key prefix before the first underscore."),
       },
     },
-    async ({ key, label, type, default_value, options }) => {
-      let snippet: string;
+    async ({ key, label, type, default_value, options, component }) => {
+      const section = component ?? key.split("_")[0] ?? "my_plugin";
+      const paramType = type === "toggle" ? "trigger" : type;
+      let paramBody: string;
 
-      if (type === "toggle") {
-        snippet = `Lampa.Settings.add('my_plugin', {
-  component: 'my_plugin',
-  name: 'My Plugin',
-  items: [
-    {
-      name: '${label}',
-      type: 'toggle',
-      field: '${key}',
-      default: ${default_value ?? "false"}
-    }
-  ]
-});`;
-      } else if (type === "select") {
-        const opts = (options ?? [])
-          .map((o) => `{ title: '${o}', value: '${o}' }`)
-          .join(",\n      ");
-        snippet = `Lampa.Settings.add('my_plugin', {
-  component: 'my_plugin',
-  name: 'My Plugin',
-  items: [
-    {
-      name: '${label}',
-      type: 'select',
-      field: '${key}',
-      default: '${default_value ?? ""}',
-      values: {
-        ${opts}
-      }
-    }
-  ]
-});`;
+      if (paramType === "trigger") {
+        paramBody = `{ name: '${key}', type: 'trigger', default: ${default_value ?? "false"} }`;
+      } else if (paramType === "select") {
+        const values = (options ?? ["low", "mid", "high"])
+          .map((o) => `            ${o}: '${o}'`)
+          .join(",\n");
+        paramBody = `{ name: '${key}', type: 'select',
+          values: {
+${values}
+          },
+          default: '${default_value ?? options?.[0] ?? "mid"}' }`;
       } else {
-        snippet = `Lampa.Settings.add('my_plugin', {
-  component: 'my_plugin',
-  name: 'My Plugin',
-  items: [
-    {
-      name: '${label}',
-      type: 'input',
-      field: '${key}',
-      default: '${default_value ?? ""}'
-    }
-  ]
-});`;
+        paramBody = `{ name: '${key}', type: 'input', placeholder: '', default: '${default_value ?? ""}' }`;
       }
 
-      const camelKey = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
-      const defaultVal =
-        type === "toggle" ? (default_value ?? "false") : `'${default_value ?? ""}'`;
-      const read = `// Read the value anywhere:\nvar ${camelKey} = Lampa.Storage.get('${key}', ${defaultVal});`;
+      const snippet = `Lampa.SettingsApi.addComponent({
+    component: '${section}',
+    name: Lampa.Lang.translate('${section}_settings'),
+    icon: '<svg width="44" height="44" viewBox="0 0 44 44"></svg>'
+})
+
+Lampa.SettingsApi.addParam({
+    component: '${section}',
+    param: ${paramBody},
+    field: {
+        name: '${label}',
+        description: ''
+    },
+    onChange: () => {
+        var value = Lampa.Storage.field('${key}')
+        console.log('${section}', '${key}', value)
+    }
+})`;
+
+      const read = `// SettingsApi params: use Storage.field() so the default is applied
+var value = Lampa.Storage.field('${key}')`;
 
       return {
         content: [
           {
             type: "text" as const,
-            text: `# New setting: ${key}\n\n## Registration snippet\n\`\`\`javascript\n${snippet}\n\`\`\`\n\n## Reading the value\n\`\`\`javascript\n${read}\n\`\`\``,
+            text: [
+              `# New setting: ${key}`,
+              ``,
+              `Register inside \`init()\` after \`app:ready\`. Prefix storage keys with the plugin name.`,
+              ``,
+              `## Registration snippet`,
+              "```javascript",
+              snippet,
+              "```",
+              ``,
+              `## Reading the value`,
+              "```javascript",
+              read,
+              "```",
+            ].join("\n"),
           },
         ],
       };
@@ -382,92 +685,19 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     "scaffold_plugin_integration",
     {
       description:
-        "Generate a complete Lampa plugin scaffold (folder structure + main.js boilerplate) for a new plugin. Prefer this over generate_plugin_boilerplate.",
+        "Generate an official Lampa plugin scaffold (guard, Listener appready, SettingsApi, Controller.add). Prefer this over generate_plugin_boilerplate.",
       inputSchema: {
         plugin_name: z.string().describe("Plugin name, e.g. 'my_feature'. Use snake_case."),
         description: z.string().describe("One-sentence description of what the plugin does."),
+        kind: z
+          .enum(["screen", "player", "context-menu", "settings-only"])
+          .optional()
+          .describe("screen (default) | player | context-menu | settings-only"),
       },
     },
-    async ({ plugin_name, description }) => {
-      const cssClass = plugin_name.replace(/_/g, "-");
-      const displayName = plugin_name.replace(/_/g, " ");
-
-      const scaffold = `# Plugin scaffold: plugins/${plugin_name}/
-
-## plugins/${plugin_name}/main.js
-\`\`\`javascript
-(function() {
-  'use strict';
-
-  var component_name = '${plugin_name}';
-
-  // ── Settings ────────────────────────────────────────────────────────────
-  function registerSettings() {
-    Lampa.Settings.add(component_name, {
-      component: component_name,
-      name: '${displayName}',
-      items: [
-        {
-          name: 'Enable ${description}',
-          type: 'toggle',
-          field: '${plugin_name}_enabled',
-          default: true
-        }
-      ]
-    });
-  }
-
-  // ── Component ───────────────────────────────────────────────────────────
-  function Component(object) {
-    var network = new Lampa.Reguest();
-    var scroll  = new Lampa.Scroll({ mask: true, over: true });
-    var items   = [];
-
-    this.create = function() {
-      // build UI here
-    };
-
-    this.start = function() {
-      Lampa.Controller.enable(component_name);
-    };
-
-    this.pause = function() {};
-    this.stop  = function() {};
-
-    this.destroy = function() {
-      network.clear();
-      scroll.destroy();
-      items = [];
-    };
-  }
-
-  // ── Init ────────────────────────────────────────────────────────────────
-  function init() {
-    registerSettings();
-    Lampa.Component.add(component_name, Component);
-  }
-
-  if (window.appready) init();
-  else $(document).on('appready', init);
-
-})();
-\`\`\`
-
-## plugins/${plugin_name}/css/style.css
-\`\`\`css
-/* Styles for ${plugin_name} plugin */
-.${cssClass}__wrap {
-  display: flex;
-  flex-direction: column;
-}
-\`\`\`
-
-## To include in Lampa build
-Add to the appropriate assembly.json or load via a \`<script>\` tag referencing
-\`plugins/${plugin_name}/main.js\`.
-`;
-
-      return { content: [{ type: "text" as const, text: scaffold }] };
+    async ({ plugin_name, description, kind }) => {
+      const text = buildOfficialScaffold(plugin_name, description, kind ?? "screen");
+      return { content: [{ type: "text" as const, text }] };
     }
   );
 }

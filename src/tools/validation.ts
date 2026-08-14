@@ -5,6 +5,14 @@ import { basename, joinRepo } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
 import { findMissingLangKeys } from "../utils/lampa_modern.js";
+import {
+  formatDocHits,
+  formatPluginGuideToc,
+  PLUGIN_DOC_CHAPTERS,
+  readPluginChapter,
+  resolveChapter,
+  searchPluginDocs,
+} from "../utils/plugin_docs.js";
 
 export function registerValidationTools(server: McpServer, config: Config): void {
   // ── run_grep_checks ────────────────────────────────────────────────────────
@@ -148,6 +156,23 @@ export function registerValidationTools(server: McpServer, config: Config): void
       const data = JSON.parse(pkg) as { scripts?: Record<string, string> };
       const scripts: Record<string, string> = data.scripts ?? {};
 
+      if (goal === "dev") {
+        const lines = [
+          `# Lampa local development (plugin docs ch.12)`,
+          ``,
+          scripts.start
+            ? `- \`npm run start\` → ${scripts.start}  (watch + BrowserSync, typically http://localhost:3000)`
+            : "- `npm run start` — not in package.json; check gulpfile.js",
+          scripts.debug
+            ? `- \`npm run debug\` → ${scripts.debug}  (same as start with inline sourcemaps)`
+            : "",
+          scripts.watch ? `- \`npm run watch\` → ${scripts.watch}` : "",
+          ``,
+          `Platform \`browser\` is detected automatically. Load a remote plugin via Settings → Extensions.`,
+        ].filter(Boolean);
+        return { content: [{ type: "text", text: lines.join("\n") }] };
+      }
+
       const candidates: Record<string, string[]> = {
         build: ["build", "compile", "bundle"],
         dev: ["dev", "start", "watch", "serve"],
@@ -186,52 +211,158 @@ export function registerValidationTools(server: McpServer, config: Config): void
     }
   );
 
-  // ── doc_lookup ─────────────────────────────────────────────────────────────
+  // ── plugin_docs ────────────────────────────────────────────────────────────
   server.registerTool(
-    "doc_lookup",
+    "plugin_docs",
     {
-      description: "Look up a topic in the generated docs (build/doc/index.html) or README.",
+      description:
+        "Read or search the official Lampa plugin guide (docs/en or docs/ru). Pass chapter (e.g. pitfalls, settings, player) or a free-text query.",
       inputSchema: {
-        topic: z.string().describe("Topic to search for, e.g. 'Storage', 'Settings', 'Component'."),
+        chapter: z
+          .string()
+          .optional()
+          .describe(
+            "Chapter id or alias: 01–13, getting-started, lifecycle, events, settings, pitfalls, controller, …"
+          ),
+        query: z.string().optional().describe("Search headings and body when chapter is omitted."),
+        lang: z.enum(["en", "ru"]).optional().describe("docs language. Default en."),
       },
     },
-    async ({ topic }) => {
-      const sources = [joinRepo(config.docsPath, "index.html"), "README.md", "UPGRADE.md"];
-
-      const results: string[] = [];
-
-      for (const src of sources) {
-        if (!(await fileExists(config.fs, src))) continue;
-        const content = (await readFileSafe(config.fs, src)) ?? "";
-        const lines = content.split("\n");
-        const hits: string[] = [];
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].toLowerCase().includes(topic.toLowerCase())) {
-            const ctx = lines
-              .slice(Math.max(0, i - 1), i + 3)
-              .join("\n")
-              .replace(/<[^>]+>/g, "")
-              .trim();
-            if (ctx.length > 5) hits.push(`L${i + 1}: ${ctx.slice(0, 200)}`);
-          }
+    async ({ chapter, query, lang }) => {
+      const locale = lang ?? "en";
+      if (chapter) {
+        const found = await readPluginChapter(config.fs, config.pluginDocsPath, chapter, locale);
+        if (!found) {
+          const aliases = PLUGIN_DOC_CHAPTERS.map((c) => `${c.id} (${c.aliases[0]})`).join(", ");
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Chapter "${chapter}" not found under docs/${locale}. Known: ${aliases}`,
+              },
+            ],
+          };
         }
-        if (hits.length > 0) {
-          results.push(`### ${basename(src)}\n${hits.slice(0, 8).join("\n")}`);
-        }
-      }
-
-      if (results.length === 0) {
         return {
           content: [
             {
-              type: "text",
-              text: `No documentation found for "${topic}". Run \`npm run doc\` in the repo to generate docs, then retry.`,
+              type: "text" as const,
+              text: `# ${found.path}\n\n${found.text}`,
             },
           ],
         };
       }
 
-      return { content: [{ type: "text", text: results.join("\n\n") }] };
+      if (query) {
+        const mapped = resolveChapter(query);
+        if (mapped) {
+          const found = await readPluginChapter(
+            config.fs,
+            config.pluginDocsPath,
+            mapped.id,
+            locale
+          );
+          if (found) {
+            return {
+              content: [{ type: "text" as const, text: `# ${found.path}\n\n${found.text}` }],
+            };
+          }
+        }
+        const hits = await searchPluginDocs(config.fs, config.pluginDocsPath, query, locale);
+        if (hits.length === 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `No plugin-docs hits for "${query}" in docs/${locale}. Try chapter=pitfalls or resource lampa://plugin-guide.`,
+              },
+            ],
+          };
+        }
+        return { content: [{ type: "text" as const, text: formatDocHits(hits) }] };
+      }
+
+      const toc = await formatPluginGuideToc(config.fs, config.pluginDocsPath, locale);
+      return { content: [{ type: "text" as const, text: toc }] };
+    }
+  );
+
+  // ── doc_lookup ─────────────────────────────────────────────────────────────
+  server.registerTool(
+    "doc_lookup",
+    {
+      description:
+        "Look up a topic in official plugin docs (docs/en), then UPGRADE.md / README. Prefer plugin_docs for a full chapter.",
+      inputSchema: {
+        topic: z
+          .string()
+          .describe("Topic, e.g. 'Storage', 'SettingsApi', 'PlayerVideo', 'pitfalls'."),
+      },
+    },
+    async ({ topic }) => {
+      const chapter = resolveChapter(topic);
+      if (chapter) {
+        const found = await readPluginChapter(config.fs, config.pluginDocsPath, chapter.id, "en");
+        if (found) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `> From official plugin docs \`${found.path}\`\n\n${found.text}`,
+              },
+            ],
+          };
+        }
+      }
+
+      const indexed = await config.fs.readIndex?.("plugin-docs");
+      const hits = await searchPluginDocs(config.fs, config.pluginDocsPath, topic, "en", 10);
+      const sections: string[] = [];
+      if (hits.length > 0) {
+        sections.push(`## Plugin docs (docs/en)\n\n${formatDocHits(hits)}`);
+      } else if (indexed != null) {
+        sections.push(
+          `## Plugin-docs index present but no text hits for "${topic}". Try plugin_docs with a chapter alias.`
+        );
+      }
+
+      const extras = ["UPGRADE.md", "README.md"];
+      for (const src of extras) {
+        if (!(await fileExists(config.fs, src))) continue;
+        const content = (await readFileSafe(config.fs, src)) ?? "";
+        const lines = content.split("\n");
+        const extraHits: string[] = [];
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].toLowerCase().includes(topic.toLowerCase())) {
+            const ctx = lines.slice(Math.max(0, i - 1), i + 3).join("\n").trim();
+            if (ctx.length > 5) extraHits.push(`L${i + 1}: ${ctx.slice(0, 200)}`);
+          }
+        }
+        if (extraHits.length > 0) {
+          sections.push(`### ${basename(src)}\n${extraHits.slice(0, 6).join("\n")}`);
+        }
+      }
+
+      const jsdoc = joinRepo(config.docsPath, "index.html");
+      if (sections.length === 0 && (await fileExists(config.fs, jsdoc))) {
+        const content = (await readFileSafe(config.fs, jsdoc)) ?? "";
+        if (content.toLowerCase().includes(topic.toLowerCase())) {
+          sections.push(`### generated JSDoc (${jsdoc})\nMatch found; strip HTML via docs://index.`);
+        }
+      }
+
+      if (sections.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No documentation found for "${topic}". Use plugin_docs({ chapter: "01" }) or resource lampa://plugin-guide.`,
+            },
+          ],
+        };
+      }
+
+      return { content: [{ type: "text" as const, text: sections.join("\n\n") }] };
     }
   );
 }

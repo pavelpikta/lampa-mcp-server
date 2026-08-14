@@ -5,7 +5,8 @@ import { NodeRepoFs } from "./fs/node.js";
 export interface Config {
   fs: RepoFs;
   label: string; // display path e.g. "r2://lampa-source" or local path
-  docsPath: string; // relative "build/doc"
+  docsPath: string; // generated JSDoc, relative "build/doc"
+  pluginDocsPath: string; // official plugin guide, relative "docs"
 }
 
 export function getConfig(): Config {
@@ -17,5 +18,6 @@ export function getConfig(): Config {
     fs: new NodeRepoFs(repoPath),
     label: repoPath,
     docsPath: "build/doc",
+    pluginDocsPath: "docs",
   };
 }

@@ -33,6 +33,7 @@ function workerConfig(env: WorkerEnv): Config {
     fs: getSharedFs(env),
     label: `r2://lampa-source/${prefix}`,
     docsPath: "build/doc",
+    pluginDocsPath: "docs",
   };
 }
 
