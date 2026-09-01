@@ -10,11 +10,12 @@ import { registerAdvancedTools } from "./tools/advanced.js";
 import { registerLampaModernTools } from "./tools/lampa_modern.js";
 import { registerCubTools } from "./tools/cub.js";
 import { registerResources } from "./resources/index.js";
+import pkg from "../package.json" with { type: "json" };
 
 export function createLampaServer(config: Config): McpServer {
   const server = new McpServer({
     name: "lampa-mcp-server",
-    version: "1.4.0",
+    version: pkg.version,
   });
 
   registerDiscoveryTools(server, config);

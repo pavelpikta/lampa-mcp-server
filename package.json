@@ -3,6 +3,11 @@
   "version": "1.4.0",
   "description": "MCP server for Lampa source repository development assistance (local stdio + Cloudflare Workers)",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pavelpikta/lampa-mcp-server.git"
+  },
   "bin": {
     "lampa-mcp-server": "dist/index.js"
   },
@@ -19,7 +24,8 @@
     "dev:worker": "wrangler dev",
     "deploy": "wrangler deploy",
     "snapshot:upload": "node scripts/upload-snapshot.mjs",
-    "snapshot:upload:local": "node scripts/upload-snapshot.mjs --local"
+    "snapshot:upload:local": "node scripts/upload-snapshot.mjs --local",
+    "release": "semantic-release"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.10.2",
@@ -30,10 +36,15 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/npm": "^13.1.3",
     "@types/node": "^26.4.0",
+    "conventional-changelog-conventionalcommits": "^9.2.0",
     "eslint": "^10.9.1",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.6",
+    "semantic-release": "^25.0.2",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.68.0",
     "wrangler": "^4.127.1"
