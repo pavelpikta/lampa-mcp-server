@@ -24,9 +24,9 @@
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.10.2",
     "@modelcontextprotocol/server": "^2.0.0",
-    "agents": "^0.21.0",
-    "hono": "^4.13.3",
-    "zod": "^4.4.3"
+    "agents": "^0.22.0",
+    "hono": "^4.13.5",
+    "zod": "^4.5.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
