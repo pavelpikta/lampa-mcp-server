@@ -32,7 +32,7 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "agents": "^0.22.0",
     "hono": "^4.13.5",
-    "zod": "^4.5.2"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
