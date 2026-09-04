@@ -1,3 +1,9 @@
+## [1.9.0](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.8.0...v1.9.0) (2026-09-04)
+
+### Features
+
+* enhance editing tools and add external API documentation ([3399be2](https://github.com/pavelpikta/lampa-mcp-server/commit/3399be2121c974a5cc795a7700997c5843e878be))
+
 ## [1.8.0](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.7.0...v1.8.0) (2026-09-04)
 
 ### Features
