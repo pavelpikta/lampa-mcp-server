@@ -652,7 +652,7 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     {
       title: "Generate Lampa plugin, setting, or hook text",
       description:
-        "Returns markdown only; does not write the repository. Emits a full plugin scaffold (`kind=plugin`), a SettingsApi snippet (`kind=setting`), or the best Listener/Player hook (`kind=hook`) — not a patch against existing files (`draft_patch`). `kind=plugin` needs plugin_name + description; `kind=setting` needs key + label + type; `kind=hook` needs trigger. Then call `validate_code` mode=plugin on the result.",
+        "Returns markdown only; does not write the repository. Emits a full plugin scaffold (`kind=plugin`), a SettingsApi snippet (`kind=setting`), or the best Listener/Player hook (`kind=hook`) — not a patch against existing files (`draft_patch`). `kind=plugin` needs plugin_name + description; `plugin_kind` is screen (default) | player | context-menu | settings-only for `kind=plugin` only; `kind=setting` needs key + label + type; `kind=hook` needs trigger. Then call `validate_code` mode=plugin on the result.",
       inputSchema: {
         kind: z
           .enum(["plugin", "setting", "hook"])

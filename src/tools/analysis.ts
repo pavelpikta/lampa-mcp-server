@@ -70,7 +70,7 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
     {
       title: "Catalog Lampa APIs and indexes",
       description:
-        "Dump one static catalog from the Lampa snapshot per call (`topic`: API surface, events, Storage keys, network URLs, settings, providers, Maker, socket, activity, flags, ContentRows, favorites, or CUB mirrors). Not a query (`search_code`), not a single-symbol walk (`trace_lampa`), not written docs (`explain_lampa`), and not a live CUB client (`cub_guide`). `query` filters the chosen catalog only; empty catalog → markdown, not an error; on R2, full-tree `events`/`storage` need a prebuilt index — pass `query` or a narrower topic if it is missing.",
+        "Dump one static catalog from the Lampa snapshot per call (`topic`: API surface, events, Storage keys, network URLs, settings, providers, Maker, socket, activity, flags, ContentRows, favorites, or CUB mirrors). Not a query (`search_code`), not a single-symbol walk (`trace_lampa`), not written docs (`explain_lampa`), and not a live CUB client (`cub_guide`). `query` filters the chosen catalog only; `detail=true` only for `topic=events` (per-file listener/emitter lists; default false); empty catalog → markdown, not an error; on R2, full-tree `events`/`storage` need a prebuilt index — pass `query` or a narrower topic if it is missing.",
       inputSchema: {
         topic: z
           .enum(MAP_TOPICS)
