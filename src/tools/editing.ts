@@ -509,7 +509,7 @@ async function formatHookGuide(config: Config, trigger: string): Promise<string>
     ``,
     `## Live code hits (keyword: "${keyword}")`,
     liveHits.slice(0, 20).join("\n") ||
-      "No matching Listener.follow hits. Narrow the trigger or use search_code with prefix=src.",
+    "No matching Listener.follow hits. Narrow the trigger or use search_code with prefix=src.",
   ].join("\n");
 }
 
@@ -583,7 +583,7 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     {
       title: "Draft a Lampa unified diff",
       description:
-        "Returns TODO unified diffs as text only — does not write the repository.\nBest with `plan_context` pasted from `plan_change`; unlike `plan_change`, this invents concrete diff hunks; unlike `scaffold_plugin`, it patches existing files rather than emitting new-plugin boilerplate.\n`target_files`, when given, fully overrides inference (the two are never combined); without it, up to 5 files are inferred from `request` alone, which is weaker than passing `plan_context`'s target list explicitly.\nMissing files get a 'File not found' note instead of aborting the whole call; the `@@` hunks are suggested, not guaranteed to apply — always re-check against `read_source` before applying by hand.",
+        "Returns TODO unified diffs as text only — does not write the repository.\nBest with `plan_context` pasted from `plan_change`; unlike `plan_change`, this invents concrete diff hunks; unlike `scaffold_plugin`, it patches existing files rather than emitting new-plugin boilerplate.\n`target_files`, when given, fully overrides inference (the two are never combined) and is capped at the first 5 entries for diff generation even if more are passed (the 'Target files' summary section still lists up to 6); without it, up to 5 files are inferred from `request` alone, which is weaker than passing `plan_context`'s target list explicitly.\nMissing files get a 'File not found' note instead of aborting the whole call; the `@@` hunks are suggested, not guaranteed to apply — always re-check against `read_source` before applying by hand.",
       inputSchema: {
         request: z.string().describe("The change to implement."),
         target_files: z

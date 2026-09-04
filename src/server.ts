@@ -12,7 +12,7 @@ import { registerPluginCatalogTools } from "./tools/plugin_catalog.js";
 import { registerResources } from "./resources/index.js";
 import pkg from "../package.json" with { type: "json" };
 
-const INSTRUCTIONS = `Lampa MCP helps agents understand and change the Lampa TV app source (local checkout or R2 snapshot). Tools are read-only: they never write the repo. Do not edit public/ or build/ — call resolve_edit_path first.
+const INSTRUCTIONS = `Lampa MCP helps agents understand and change the Lampa TV app source (local checkout or R2 snapshot). Tools are read-only by design: none of them write the repo or execute a build, apply a patch, or call a network API on your behalf — this is a deliberate safety boundary, not a missing feature. Do not edit public/ or build/ — call resolve_edit_path first.
 
 Preferred loop:
 summarize_repo → explain_docs(mode=plugin_docs) | analyze_plugin
