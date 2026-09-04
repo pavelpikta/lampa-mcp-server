@@ -56,8 +56,12 @@ updates:
         patterns:
           - "*"
     # Stay on TypeScript 6 until the toolchain (typescript-eslint, vue-tsc, …) supports 7.
+    # Pin conventionalcommits preset to v9 until @semantic-release/release-notes-generator
+    # ships conventional-changelog-writer@9 (v15+); v10+ fails generateNotes with writer@8.
     ignore:
       - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "conventional-changelog-conventionalcommits"
         update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
