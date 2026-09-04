@@ -1,3 +1,9 @@
+## [1.8.0](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.7.0...v1.8.0) (2026-09-04)
+
+### Features
+
+* rename tools for clarity and consistency ([b0d15cb](https://github.com/pavelpikta/lampa-mcp-server/commit/b0d15cb2a7b4ecb7934617c4c78eff96ab438ece))
+
 ## [1.7.0](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.6.0...v1.7.0) (2026-09-04)
 
 ### Features
