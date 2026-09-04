@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import { readFileSafe, fileExists } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
 import { inferFeatureFiles, detectRisks } from "../utils/lampa.js";
+import { READ_ONLY_SNAPSHOT, fail, ok, reportOutput } from "./meta.js";
 
 interface AnchorHit {
   line: number; // 1-based
@@ -368,272 +369,179 @@ if (!window.${flag}) ${startFn}()
 Built-in plugins: Gulp may \`@@include('../plugins/${pluginName}/css/style.css')\` into the style template.
 External plugins: keep CSS in the Template.add string as above.
 
-Validate with \`validate_plugin\`. See \`lampa://plugin-guide\` and \`lampa://pitfalls\`.
+Validate with \`validate_code\` mode=plugin. See \`lampa://plugin-guide\` and \`lampa://pitfalls\`.
 `;
 }
 
-export function registerEditingTools(server: McpServer, config: Config): void {
-  // ── draft_patch ────────────────────────────────────────────────────────────
-  server.registerTool(
-    "draft_patch",
-    {
-      description:
-        "Draft a code patch for a Lampa change. Requires a prior plan_feature_change / plan_change call. Returns unified-diff suggestions anchored to real symbols in each target file.",
-      inputSchema: {
-        request: z.string().describe("The change to implement."),
-        target_files: z
-          .array(z.string())
-          .optional()
-          .describe("Files to focus on (repo-relative paths)."),
-        plan_context: z
-          .string()
-          .optional()
-          .describe("Paste the output of plan_feature_change / plan_change here for best results."),
-      },
-    },
-    async ({ request, target_files, plan_context }) => {
-      const files = target_files ?? (await inferFeatureFiles(config.fs, request));
-      const risks = await detectRisks(config.fs, files);
+async function formatHookGuide(config: Config, trigger: string): Promise<string> {
+  const lower = trigger.toLowerCase();
+  const keyword =
+    lower
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2)
+      .sort((a, b) => b.length - a.length)[0] ?? trigger;
 
-      const diffs: string[] = [];
-      for (const f of files.slice(0, 5)) {
-        if (!(await fileExists(config.fs, f))) {
-          diffs.push(`### ${f}\nFile not found — create new file or pick another target.`);
-          continue;
-        }
-        const content = (await readFileSafe(config.fs, f)) ?? "";
-        diffs.push(buildUnifiedDiffSuggestion(f, content, request));
+  const searchPatterns = [
+    "Lampa.Listener.follow",
+    "Player.listener.follow",
+    "PlayerVideo.listener.follow",
+    "Storage.listener.follow",
+    "Favorite.listener.follow",
+    "Keypad.listener.follow",
+  ];
+
+  const liveHits: string[] = [];
+  const prefixes = ["src", "plugins"] as const;
+  for (const prefix of prefixes) {
+    const withKeyword = await searchCode(config.fs, keyword, ["*.js"], false, prefix);
+    for (const m of withKeyword) {
+      if (
+        !/listener\.follow|Listener\.follow|Listener\.send/i.test(m.text) &&
+        !lower.split(/\s+/).some((w) => w.length > 3 && m.text.toLowerCase().includes(w))
+      ) {
+        continue;
       }
-
-      const draft = [
-        `# Draft Patch: "${request}"`,
-        ``,
-        plan_context ? `## Plan context\n${plan_context}\n` : "",
-        `## Target files`,
-        files
-          .slice(0, 6)
-          .map((f) => `- ${f}`)
-          .join("\n"),
-        ``,
-        `## Unified-diff suggestions`,
-        diffs.join("\n\n") || "No target files available.",
-        ``,
-        `## Risks before editing`,
-        risks.length > 0 ? risks.map((r) => `⚠ ${r}`).join("\n") : "✓ None detected.",
-        ``,
-        `## Patch guidance`,
-        `Based on Lampa conventions:`,
-        ``,
-        `1. **Plugin entry:** \`scaffold_plugin_integration\` (official guard + Listener appready + SettingsApi).`,
-        `2. **Settings:** \`Lampa.SettingsApi.addComponent\` / \`addParam\`; read with \`Lampa.Storage.field(key)\`.`,
-        `3. **Storage:** prefix keys; \`Storage.get/set\` for plugin state, \`Storage.field\` for SettingsApi params.`,
-        `4. **Events:** \`Lampa.Listener.follow('app', …)\` for ready; \`Player.listener\` / \`PlayerVideo.listener\` for playback.`,
-        ``,
-        `> ⚠ Guided draft only. Read the full anchor region with \`read_file_segment\` and adapt to surrounding style.`,
-      ]
-        .filter((l) => l !== undefined)
-        .join("\n");
-
-      return { content: [{ type: "text" as const, text: draft }] };
+      if (
+        /listener\.follow|Listener\.follow|Listener\.send/i.test(m.text) ||
+        m.text.toLowerCase().includes(keyword.toLowerCase())
+      ) {
+        const line = `${m.file}:${m.line}  ${m.text}`;
+        if (!liveHits.includes(line)) liveHits.push(line);
+      }
     }
-  );
+  }
 
-  // ── insert_hook ────────────────────────────────────────────────────────────
-  server.registerTool(
-    "insert_hook",
-    {
-      description:
-        "Find the best Lampa.Listener / Player.listener / PlayerVideo / Storage / Favorite / Keypad hook for a trigger. Official plugin-docs catalog plus live code hits.",
-      inputSchema: {
-        trigger: z
-          .string()
-          .describe(
-            "The event or lifecycle moment, e.g. 'player start', 'app ready', 'card full', 'storage change'."
-          ),
-      },
-    },
-    async ({ trigger }) => {
-      const lower = trigger.toLowerCase();
-      const keyword =
-        lower
-          .replace(/[^a-z0-9\s]/g, " ")
-          .split(/\s+/)
-          .filter((w) => w.length > 2)
-          .sort((a, b) => b.length - a.length)[0] ?? trigger;
-
-      const searchPatterns = [
-        "Lampa.Listener.follow",
-        "Player.listener.follow",
-        "PlayerVideo.listener.follow",
-        "Storage.listener.follow",
-        "Favorite.listener.follow",
-        "Keypad.listener.follow",
-      ];
-
-      const liveHits: string[] = [];
-      const prefixes = ["src", "plugins"] as const;
+  if (liveHits.length === 0) {
+    for (const pat of searchPatterns) {
       for (const prefix of prefixes) {
-        const withKeyword = await searchCode(config.fs, keyword, ["*.js"], false, prefix);
-        for (const m of withKeyword) {
-          if (
-            !/listener\.follow|Listener\.follow|Listener\.send/i.test(m.text) &&
-            !lower.split(/\s+/).some((w) => w.length > 3 && m.text.toLowerCase().includes(w))
-          ) {
-            continue;
-          }
-          if (
-            /listener\.follow|Listener\.follow|Listener\.send/i.test(m.text) ||
-            m.text.toLowerCase().includes(keyword.toLowerCase())
-          ) {
-            const line = `${m.file}:${m.line}  ${m.text}`;
-            if (!liveHits.includes(line)) liveHits.push(line);
-          }
+        const hits = await searchCode(config.fs, pat, ["*.js"], false, prefix);
+        for (const m of hits.slice(0, 5)) {
+          const line = `${m.file}:${m.line}  ${m.text}`;
+          if (!liveHits.includes(line)) liveHits.push(line);
         }
       }
-
-      if (liveHits.length === 0) {
-        for (const pat of searchPatterns) {
-          for (const prefix of prefixes) {
-            const hits = await searchCode(config.fs, pat, ["*.js"], false, prefix);
-            for (const m of hits.slice(0, 5)) {
-              const line = `${m.file}:${m.line}  ${m.text}`;
-              if (!liveHits.includes(line)) liveHits.push(line);
-            }
-          }
-        }
-      }
-
-      const eventMap: Array<{ keywords: string[]; event: string; description: string }> = [
-        {
-          keywords: ["app", "ready", "init", "boot"],
-          event:
-            "if (window.appready) init(); else Lampa.Listener.follow('app', e => { if (e.type == 'ready') init() })",
-          description:
-            "App fully initialized. Do NOT use $(document).on('appready'). UI/Settings/Menu/Player are only safe after app:ready.",
-        },
-        {
-          keywords: ["player", "play", "video", "playback"],
-          event: "Lampa.Player.listener.follow('start'|'create'|'ready'|'destroy'|'external', fn)",
-          description:
-            "Player lifecycle. Subscribe to PlayerVideo inside start; remove every PlayerVideo handler in destroy. create can data.abort().",
-        },
-        {
-          keywords: ["canplay", "timeupdate", "ended", "tracks", "subs", "subtitle"],
-          event: "Lampa.PlayerVideo.listener.follow('canplay'|'timeupdate'|'ended'|…, namedFn)",
-          description:
-            "Video element events. Module is recreated each open — always .remove(type, namedFn) on Player:destroy.",
-        },
-        {
-          keywords: ["card", "full", "detail"],
-          event: "Lampa.Listener.follow('full', fn)",
-          description: "Card detail (full-info) page lifecycle.",
-        },
-        {
-          keywords: ["activity", "navigate", "route", "screen"],
-          event: "Lampa.Listener.follow('activity', fn)",
-          description:
-            "Navigation stack. e.type: create | init | start | destroy | archive. Not Activity.listener.",
-        },
-        {
-          keywords: ["line", "row", "catalog", "feed"],
-          event: "Lampa.Listener.follow('line', fn)",
-          description: "Horizontal content-row events.",
-        },
-        {
-          keywords: ["torrent", "magnet"],
-          event: "Lampa.Listener.follow('torrent'|'torrent_file', fn)",
-          description: "Torrent search / file list (list_open, list_close, render).",
-        },
-        {
-          keywords: ["storage", "save", "load"],
-          event: "Lampa.Storage.listener.follow('change', fn)",
-          description: "Storage writes. Payload {name, value}. Prefix plugin keys.",
-        },
-        {
-          keywords: ["favorite", "bookmark", "like", "wath", "history"],
-          event: "Lampa.Favorite.listener.follow('add'|'added'|'remove', fn)",
-          description: "Bookmark categories. e.where is like | wath | history | book.",
-        },
-        {
-          keywords: ["key", "remote", "keypad", "hotkey"],
-          event: "Lampa.Keypad.listener.follow('keydown'|'left'|'enter'|…, namedFn)",
-          description: "Global remote keys. Always remove in destroy — not scoped to a component.",
-        },
-        {
-          keywords: ["settings", "menu"],
-          event: "Lampa.SettingsApi.addComponent / addParam  (register in init after app:ready)",
-          description: "Settings UI is not a Listener event. Register sections with SettingsApi.",
-        },
-      ];
-
-      const recommended: string[] = [];
-      for (const entry of eventMap) {
-        if (entry.keywords.some((k) => lower.includes(k))) {
-          recommended.push(`### ${entry.event}\n${entry.description}`);
-        }
-      }
-      if (recommended.length === 0) {
-        recommended.push(
-          `No catalog match for "${trigger}". See resource \`lampa://events\` or search \`Lampa.Listener\` / \`Player.listener\`.`
-        );
-      }
-
-      const text = [
-        `# Hook insertion for: "${trigger}"`,
-        ``,
-        `## Recommended pattern (plugin docs)`,
-        recommended.join("\n\n"),
-        ``,
-        `## Live code hits (keyword: "${keyword}")`,
-        liveHits.slice(0, 20).join("\n") ||
-          "No matching Listener.follow / listener.follow hits. Narrow the trigger or use search_code with prefix=src.",
-      ].join("\n");
-
-      return { content: [{ type: "text" as const, text }] };
     }
-  );
+  }
 
-  // ── add_setting ────────────────────────────────────────────────────────────
-  server.registerTool(
-    "add_setting",
+  const eventMap: Array<{ keywords: string[]; event: string; description: string }> = [
     {
+      keywords: ["app", "ready", "init", "boot"],
+      event:
+        "if (window.appready) init(); else Lampa.Listener.follow('app', e => { if (e.type == 'ready') init() })",
       description:
-        "Generate SettingsApi boilerplate (addComponent + addParam). Uses Storage.field() for reads. Prefer over Lampa.Settings.add.",
-      inputSchema: {
-        key: z.string().describe("Storage key, e.g. 'myplugin_enabled'. Prefix with plugin name."),
-        label: z.string().describe("Human-readable label shown in the UI."),
-        type: z
-          .enum(["toggle", "select", "input", "trigger"])
-          .describe("Setting type. toggle is an alias of trigger."),
-        default_value: z.string().optional().describe("Default value."),
-        options: z.array(z.string()).optional().describe("Options for 'select' type."),
-        component: z
-          .string()
-          .optional()
-          .describe("Settings section id. Defaults to the key prefix before the first underscore."),
-      },
+        "App fully initialized. Do NOT use $(document).on('appready'). UI/Settings/Menu/Player are only safe after app:ready.",
     },
-    async ({ key, label, type, default_value, options, component }) => {
-      const section = component ?? key.split("_")[0] ?? "my_plugin";
-      const paramType = type === "toggle" ? "trigger" : type;
-      let paramBody: string;
+    {
+      keywords: ["player", "play", "video", "playback"],
+      event: "Lampa.Player.listener.follow('start'|'create'|'ready'|'destroy'|'external', fn)",
+      description:
+        "Player lifecycle. Subscribe to PlayerVideo inside start; remove every PlayerVideo handler in destroy. create can data.abort().",
+    },
+    {
+      keywords: ["canplay", "timeupdate", "ended", "tracks", "subs", "subtitle"],
+      event: "Lampa.PlayerVideo.listener.follow('canplay'|'timeupdate'|'ended'|…, namedFn)",
+      description:
+        "Video element events. Module is recreated each open — always .remove(type, namedFn) on Player:destroy.",
+    },
+    {
+      keywords: ["card", "full", "detail"],
+      event: "Lampa.Listener.follow('full', fn)",
+      description: "Card detail (full-info) page lifecycle.",
+    },
+    {
+      keywords: ["activity", "navigate", "route", "screen"],
+      event: "Lampa.Listener.follow('activity', fn)",
+      description:
+        "Navigation stack. e.type: create | init | start | destroy | archive. Not Activity.listener.",
+    },
+    {
+      keywords: ["line", "row", "catalog", "feed"],
+      event: "Lampa.Listener.follow('line', fn)",
+      description: "Horizontal content-row events.",
+    },
+    {
+      keywords: ["torrent", "magnet"],
+      event: "Lampa.Listener.follow('torrent'|'torrent_file', fn)",
+      description: "Torrent search / file list (list_open, list_close, render).",
+    },
+    {
+      keywords: ["storage", "save", "load"],
+      event: "Lampa.Storage.listener.follow('change', fn)",
+      description: "Storage writes. Payload {name, value}. Prefix plugin keys.",
+    },
+    {
+      keywords: ["favorite", "bookmark", "like", "wath", "history"],
+      event: "Lampa.Favorite.listener.follow('add'|'added'|'remove', fn)",
+      description: "Bookmark categories. e.where is like | wath | history | book.",
+    },
+    {
+      keywords: ["key", "remote", "keypad", "hotkey"],
+      event: "Lampa.Keypad.listener.follow('keydown'|'left'|'enter'|…, namedFn)",
+      description: "Global remote keys. Always remove in destroy — not scoped to a component.",
+    },
+    {
+      keywords: ["settings", "menu"],
+      event: "Lampa.SettingsApi.addComponent / addParam  (register in init after app:ready)",
+      description: "Settings UI is not a Listener event. Register sections with SettingsApi.",
+    },
+  ];
 
-      if (paramType === "trigger") {
-        paramBody = `{ name: '${key}', type: 'trigger', default: ${default_value ?? "false"} }`;
-      } else if (paramType === "select") {
-        const values = (options ?? ["low", "mid", "high"])
-          .map((o) => `            ${o}: '${o}'`)
-          .join(",\n");
-        paramBody = `{ name: '${key}', type: 'select',
+  const recommended: string[] = [];
+  for (const entry of eventMap) {
+    if (entry.keywords.some((k) => lower.includes(k))) {
+      recommended.push(`### ${entry.event}\n${entry.description}`);
+    }
+  }
+  if (recommended.length === 0) {
+    recommended.push(
+      `No catalog match for "${trigger}". See resource \`lampa://events\` or search_code for Listener.follow.`
+    );
+  }
+
+  return [
+    `# Hook insertion for: "${trigger}"`,
+    ``,
+    `This returns text only — it does not write files.`,
+    ``,
+    `## Recommended pattern (plugin docs)`,
+    recommended.join("\n\n"),
+    ``,
+    `## Live code hits (keyword: "${keyword}")`,
+    liveHits.slice(0, 20).join("\n") ||
+      "No matching Listener.follow hits. Narrow the trigger or use search_code with prefix=src.",
+  ].join("\n");
+}
+
+function formatSettingSnippet(args: {
+  key: string;
+  label: string;
+  type: "toggle" | "select" | "input" | "trigger";
+  default_value?: string;
+  options?: string[];
+  component?: string;
+}): string {
+  const { key, label, type, default_value, options, component } = args;
+  const section = component ?? key.split("_")[0] ?? "my_plugin";
+  const paramType = type === "toggle" ? "trigger" : type;
+  let paramBody: string;
+
+  if (paramType === "trigger") {
+    paramBody = `{ name: '${key}', type: 'trigger', default: ${default_value ?? "false"} }`;
+  } else if (paramType === "select") {
+    const values = (options ?? ["low", "mid", "high"])
+      .map((o) => `            ${o}: '${o}'`)
+      .join(",\n");
+    paramBody = `{ name: '${key}', type: 'select',
           values: {
 ${values}
           },
           default: '${default_value ?? options?.[0] ?? "mid"}' }`;
-      } else {
-        paramBody = `{ name: '${key}', type: 'input', placeholder: '', default: '${default_value ?? ""}' }`;
-      }
+  } else {
+    paramBody = `{ name: '${key}', type: 'input', placeholder: '', default: '${default_value ?? ""}' }`;
+  }
 
-      const snippet = `Lampa.SettingsApi.addComponent({
+  const snippet = `Lampa.SettingsApi.addComponent({
     component: '${section}',
     name: Lampa.Lang.translate('${section}_settings'),
     icon: '<svg width="44" height="44" viewBox="0 0 44 44"></svg>'
@@ -652,52 +560,173 @@ Lampa.SettingsApi.addParam({
     }
 })`;
 
-      const read = `// SettingsApi params: use Storage.field() so the default is applied
-var value = Lampa.Storage.field('${key}')`;
+  return [
+    `# New setting: ${key}`,
+    ``,
+    `Returns a snippet only — it does not write the repo. Register inside init() after app:ready.`,
+    ``,
+    `## Registration snippet`,
+    "```javascript",
+    snippet,
+    "```",
+    ``,
+    `## Reading the value`,
+    "```javascript",
+    `var value = Lampa.Storage.field('${key}')`,
+    "```",
+  ].join("\n");
+}
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: [
-              `# New setting: ${key}`,
-              ``,
-              `Register inside \`init()\` after \`app:ready\`. Prefix storage keys with the plugin name.`,
-              ``,
-              `## Registration snippet`,
-              "```javascript",
-              snippet,
-              "```",
-              ``,
-              `## Reading the value`,
-              "```javascript",
-              read,
-              "```",
-            ].join("\n"),
-          },
-        ],
-      };
+export function registerEditingTools(server: McpServer, config: Config): void {
+  server.registerTool(
+    "draft_patch",
+    {
+      title: "Draft a Lampa unified diff",
+      description:
+        "Suggest unified-diff patches anchored to real symbols in inferred or listed target files. Requires a prior `plan_change` (pass it as plan_context). Unlike `plan_change`, this invents TODO diffs; unlike `scaffold_plugin`, it patches existing files rather than generating a new plugin. **Does not write the repository** — it only returns text. Read-only snapshot. Missing files are noted in the report. Prefer `read_source` on the anchor region before applying anything by hand.",
+      inputSchema: {
+        request: z.string().describe("The change to implement."),
+        target_files: z
+          .array(z.string())
+          .optional()
+          .describe("Files to focus on (repo-relative paths). Inferred from request if omitted."),
+        plan_context: z
+          .string()
+          .optional()
+          .describe("Paste the output of plan_change here for best results."),
+      },
+      outputSchema: reportOutput,
+      annotations: READ_ONLY_SNAPSHOT,
+    },
+    async ({ request, target_files, plan_context }) => {
+      const files = target_files ?? (await inferFeatureFiles(config.fs, request));
+      const risks = await detectRisks(config.fs, files);
+
+      const diffs: string[] = [];
+      for (const f of files.slice(0, 5)) {
+        if (!(await fileExists(config.fs, f))) {
+          diffs.push(`### ${f}\nFile not found — create new file or pick another target.`);
+          continue;
+        }
+        const content = (await readFileSafe(config.fs, f)) ?? "";
+        diffs.push(buildUnifiedDiffSuggestion(f, content, request));
+      }
+
+      const draft = [
+        `# Draft Patch: "${request}"`,
+        ``,
+        `This tool does not write files. Apply diffs yourself after reading the anchors.`,
+        ``,
+        plan_context ? `## Plan context\n${plan_context}\n` : "",
+        `## Target files`,
+        files
+          .slice(0, 6)
+          .map((f) => `- ${f}`)
+          .join("\n"),
+        ``,
+        `## Unified-diff suggestions`,
+        diffs.join("\n\n") || "No target files available.",
+        ``,
+        `## Risks before editing`,
+        risks.length > 0 ? risks.map((r) => `- ${r}`).join("\n") : "None detected.",
+        ``,
+        `## Patch guidance`,
+        `1. New plugin: \`scaffold_plugin\` kind=plugin (guard + Listener appready + SettingsApi).`,
+        `2. Settings: \`scaffold_plugin\` kind=setting; read with Storage.field(key).`,
+        `3. Hooks: \`scaffold_plugin\` kind=hook.`,
+        `4. Then \`validate_code\` mode=plugin.`,
+      ]
+        .filter((l) => l !== undefined)
+        .join("\n");
+
+      return ok(draft);
     }
   );
 
-  // ── scaffold_plugin_integration ────────────────────────────────────────────
   server.registerTool(
-    "scaffold_plugin_integration",
+    "scaffold_plugin",
     {
+      title: "Generate Lampa plugin, setting, or hook text",
       description:
-        "Generate an official Lampa plugin scaffold (guard, Listener appready, SettingsApi, Controller.add). Prefer this over generate_plugin_boilerplate.",
+        "Generate new Lampa code as markdown: a full plugin scaffold (`kind=plugin`), a SettingsApi snippet (`kind=setting`), or the best Listener/Player hook for a trigger (`kind=hook`). Unlike `draft_patch`, this creates new boilerplate rather than diffs against existing files. **Does not write the repository.** `kind=plugin` needs plugin_name + description; `kind=setting` needs key + label; `kind=hook` needs trigger. plugin_kind picks screen/player/context-menu/settings-only for kind=plugin. Then call `validate_code` mode=plugin on the result.",
       inputSchema: {
-        plugin_name: z.string().describe("Plugin name, e.g. 'my_feature'. Use snake_case."),
-        description: z.string().describe("One-sentence description of what the plugin does."),
         kind: z
+          .enum(["plugin", "setting", "hook"])
+          .describe(
+            "plugin=full main.js scaffold; setting=SettingsApi snippet; hook=Listener catalog."
+          ),
+        plugin_name: z
+          .string()
+          .optional()
+          .describe("For kind=plugin: snake_case folder/id, e.g. 'my_feature'."),
+        description: z
+          .string()
+          .optional()
+          .describe("For kind=plugin: one-sentence description of what the plugin does."),
+        plugin_kind: z
           .enum(["screen", "player", "context-menu", "settings-only"])
           .optional()
-          .describe("screen (default) | player | context-menu | settings-only"),
+          .describe("For kind=plugin: screen (default) | player | context-menu | settings-only."),
+        key: z
+          .string()
+          .optional()
+          .describe(
+            "For kind=setting: Storage key, e.g. 'myplugin_enabled'. Prefix with plugin name."
+          ),
+        label: z.string().optional().describe("For kind=setting: human-readable UI label."),
+        type: z
+          .enum(["toggle", "select", "input", "trigger"])
+          .optional()
+          .describe("For kind=setting: param type. toggle aliases trigger."),
+        default_value: z.string().optional().describe("For kind=setting: default value."),
+        options: z
+          .array(z.string())
+          .optional()
+          .describe("For kind=setting type=select: option ids."),
+        component: z
+          .string()
+          .optional()
+          .describe("For kind=setting: Settings section id. Defaults to key prefix before '_'."),
+        trigger: z
+          .string()
+          .optional()
+          .describe(
+            "For kind=hook: event or lifecycle moment, e.g. 'player start', 'app ready', 'card full'."
+          ),
       },
+      outputSchema: reportOutput,
+      annotations: READ_ONLY_SNAPSHOT,
     },
-    async ({ plugin_name, description, kind }) => {
-      const text = buildOfficialScaffold(plugin_name, description, kind ?? "screen");
-      return { content: [{ type: "text" as const, text }] };
+    async (args) => {
+      if (args.kind === "plugin") {
+        if (!args.plugin_name || !args.description) {
+          return fail("kind=plugin requires plugin_name and description.");
+        }
+        return ok(
+          [
+            `This tool does not write files. Save the scaffold under plugins/${args.plugin_name}/ yourself.`,
+            ``,
+            buildOfficialScaffold(args.plugin_name, args.description, args.plugin_kind ?? "screen"),
+          ].join("\n")
+        );
+      }
+      if (args.kind === "setting") {
+        if (!args.key || !args.label || !args.type) {
+          return fail("kind=setting requires key, label, and type.");
+        }
+        return ok(
+          formatSettingSnippet({
+            key: args.key,
+            label: args.label,
+            type: args.type,
+            default_value: args.default_value,
+            options: args.options,
+            component: args.component,
+          })
+        );
+      }
+      if (!args.trigger) return fail("kind=hook requires trigger.");
+      return ok(await formatHookGuide(config, args.trigger));
     }
   );
 }

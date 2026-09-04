@@ -4,6 +4,7 @@ import type { Config } from "./config.js";
 import { R2RepoFs } from "./fs/r2.js";
 import { createLampaServer } from "./server.js";
 import { PublicHandler, resolveGitHubPat, type AuthProps } from "./auth/github-handler.js";
+import { READ_ONLY_SNAPSHOT, fail, ok, reportOutput } from "./tools/meta.js";
 
 export interface WorkerEnv {
   LAMPA_SOURCE: R2Bucket;
@@ -44,29 +45,22 @@ function createServer(env: WorkerEnv) {
   server.registerTool(
     "whoami",
     {
-      description: "Return the authenticated GitHub user for this MCP session.",
+      title: "Show authenticated GitHub user",
+      description:
+        "Return the GitHub login for this Worker MCP session. Worker-only; not part of the shared Lampa tool set. Use it to confirm PAT auth before calling repo tools. Does not read Lampa source. Read-only; no side effects. Unauthenticated sessions return an error.",
       inputSchema: {},
+      outputSchema: reportOutput,
+      annotations: READ_ONLY_SNAPSHOT,
     },
     async () => {
       const auth = getMcpAuthContext();
       const props = auth?.props as { login?: string; name?: string; email?: string } | undefined;
       if (!props?.login) {
-        return {
-          content: [{ type: "text" as const, text: "Not authenticated." }],
-        };
+        return fail("Not authenticated.");
       }
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify(
-              { login: props.login, name: props.name, email: props.email },
-              null,
-              2
-            ),
-          },
-        ],
-      };
+      return ok(
+        JSON.stringify({ login: props.login, name: props.name, email: props.email }, null, 2)
+      );
     }
   );
 

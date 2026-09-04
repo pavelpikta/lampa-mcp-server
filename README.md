@@ -17,15 +17,32 @@ Runs in two modes:
 
 ## What it does
 
-The server exposes discovery, analysis, planning, editing, validation, and Lampa/CUB specialty tools, plus curated resources (`lampa://plugin-guide`, `lampa://pitfalls`, `lampa://events`, `lampa://landmarks`, `lampa://edit-rules`, `lampa://api-surface`).
+The server exposes **14 tools** (plus Worker-only `whoami`) and curated resources (`lampa://plugin-guide`, `lampa://pitfalls`, `lampa://events`, `lampa://landmarks`, `lampa://edit-rules`, `lampa://api-surface`). Tools are read-only: they never write the Lampa repo.
+
+| Tool                | Role                                                      |
+| ------------------- | --------------------------------------------------------- |
+| `repo_overview`     | Snapshot metadata, tree, scripts, optional module listing |
+| `search_code`       | Content/regex search                                      |
+| `find_files`        | Paths by name, feature, UI, styles, or specs              |
+| `read_source`       | File / core module / template bytes                       |
+| `plugin_deep_dive`  | One plugin folder (+ load path if name omitted)           |
+| `map_lampa`         | Catalogs (API, events, storage, Maker, …)                 |
+| `trace_lampa`       | Follow one event, component, file, or deprecated API      |
+| `explain_lampa`     | Plugin docs, patterns, packaging                          |
+| `plan_change`       | Plan + targets + impact + risks                           |
+| `draft_patch`       | Suggested diffs (does not write)                          |
+| `scaffold_plugin`   | New plugin / setting / hook text (does not write)         |
+| `validate_code`     | Plugin score, grep, i18n, build hint                      |
+| `cub_guide`         | CUB APIs as used in Lampa source                          |
+| `resolve_edit_path` | Authoritative `src/` / `plugins/` path                    |
 
 Preferred agent loop:
 
 ```
-snapshot_info → lampa://plugin-guide | plugin_docs
-  → plugin_deep_dive | search_code(prefix)
-  → plan_change → scaffold_plugin_integration / draft_patch
-  → validate_plugin | i18n_check
+repo_overview → explain_lampa(mode=plugin_docs) | plugin_deep_dive
+  → search_code | map_lampa | trace_lampa
+  → resolve_edit_path → plan_change → scaffold_plugin | draft_patch
+  → validate_code
 ```
 
 Use `resolve_edit_path` before editing so you change `src/` / `plugins/` rather than `public/` or `build/`.
@@ -185,10 +202,10 @@ Then point the MCP inspector / client at `http://localhost:8787/mcp` with `Autho
 ## Recommended agent workflow
 
 ```
-snapshot_info → lampa://plugin-guide | plugin_docs
-    → plugin_deep_dive | search_code(prefix)
-    → plan_change → scaffold_plugin_integration / draft_patch
-    → validate_plugin | i18n_check
+repo_overview → explain_lampa(mode=plugin_docs) | plugin_deep_dive
+    → search_code | map_lampa | trace_lampa
+    → resolve_edit_path → plan_change → scaffold_plugin | draft_patch
+    → validate_code
 ```
 
 Plugin authoring must follow official `docs/en` (Listener app:ready, SettingsApi, double-load guard). Do not emit `$(document).on('appready')` or `Lampa.Settings.add`.
@@ -196,9 +213,27 @@ Plugin authoring must follow official `docs/en` (Listener app:ready, SettingsApi
 For CUB account/sync work:
 
 ```
-cub_auth_guide → cub_api_catalog → cub_sync_guide
-    → cub_data_models → cub_endpoint_detail
+cub_guide(topic=auth) → cub_guide(topic=catalog) → cub_guide(topic=sync)
+    → cub_guide(topic=models) → cub_guide(topic=endpoint)
 ```
+
+### Breaking change (v1.x → consolidated tools)
+
+Aliases and thin wrappers were removed so the catalog stays in the 3–15 range Glama scores. Call the replacement instead:
+
+| Removed                                                                                                                    | Use instead                        |
+| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `snapshot_info`, `list_scripts`, `list_modules`                                                                            | `repo_overview`                    |
+| `read_file`, `read_file_segment`, `get_core_module`, `list_templates`, `extract_template_html`                             | `read_source`                      |
+| `find_feature`, `find_ui_component`, `find_styles_for_module`, `list_related_tests`                                        | `find_files` (`mode=…`)            |
+| `plan_feature_change`, `impact_analysis`, `suggest_edit_targets`, `risk_scan`                                              | `plan_change`                      |
+| `scaffold_plugin_integration`, `generate_plugin_boilerplate`, `add_setting`, `insert_hook`                                 | `scaffold_plugin`                  |
+| `validate_plugin`, `run_grep_checks`, `i18n_check`, `find_translation_keys`, `translation_coverage`, `run_build_hint`      | `validate_code`                    |
+| `plugin_docs`, `doc_lookup`, `explain_lampa_pattern`, `platform_packaging_guide`                                           | `explain_lampa`                    |
+| `lampa_api_surface`, `list_all_events`, `get_storage_schema`, `get_network_map`, `find_settings`, Maker/socket/flags/…     | `map_lampa` (`topic=…`)            |
+| `trace_event`, `component_lifecycle`, `module_dependency_map`, `find_api_calls`, `upgrade_migration_checker`               | `trace_lampa`                      |
+| `cub_api_catalog`, `cub_endpoint_detail`, `cub_auth_guide`, `cub_data_models`, `cub_sync_guide`, `cub_timeline_hash_guide` | `cub_guide`                        |
+| `plugin_load_path`                                                                                                         | `plugin_deep_dive` (omit `plugin`) |
 
 ---
 
@@ -240,16 +275,16 @@ npm run snapshot:upload
 
 ### Dependencies (what / why)
 
-| Package | Role |
-|---|---|
-| `@modelcontextprotocol/server` | MCP SDK (stdio + shared server factory) |
-| `agents` | Workers MCP handler (`createMcpHandler`) |
-| `@cloudflare/workers-oauth-provider` | Worker auth wrapper (PAT via `resolveExternalToken`) |
-| `hono` | Public HTML routes (`/`, `/authorize`) |
-| `zod` | Tool input schemas |
-| `typescript` | TypeScript 6 compiler + types for `typescript-eslint` |
-| `wrangler` | Deploy, `wrangler types`, local Worker dev |
-| `eslint` + `typescript-eslint` + `prettier` | Lint / format |
+| Package                                     | Role                                                  |
+| ------------------------------------------- | ----------------------------------------------------- |
+| `@modelcontextprotocol/server`              | MCP SDK (stdio + shared server factory)               |
+| `agents`                                    | Workers MCP handler (`createMcpHandler`)              |
+| `@cloudflare/workers-oauth-provider`        | Worker auth wrapper (PAT via `resolveExternalToken`)  |
+| `hono`                                      | Public HTML routes (`/`, `/authorize`)                |
+| `zod`                                       | Tool input schemas                                    |
+| `typescript`                                | TypeScript 6 compiler + types for `typescript-eslint` |
+| `wrangler`                                  | Deploy, `wrangler types`, local Worker dev            |
+| `eslint` + `typescript-eslint` + `prettier` | Lint / format                                         |
 
 Runtime deps ship with both the stdio CLI and the Worker. Dev deps are local-only.
 
