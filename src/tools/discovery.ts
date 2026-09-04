@@ -4,27 +4,31 @@ import type { Config } from "../config.js";
 import { basename } from "../fs/paths.js";
 import { listFilesRecursive, readFileSafe, readSegment, fileExists } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
-import { resolveEditPath } from "../utils/lampa.js";
+import { inferFeatureFiles, LAMPA_FEATURE_MAP, resolveEditPath } from "../utils/lampa.js";
+import { formatTemplates } from "../utils/lampa_deep.js";
+import { READ_ONLY_SNAPSHOT, fail, ok, reportOutput } from "./meta.js";
 
 export function registerDiscoveryTools(server: McpServer, config: Config): void {
-  // ── repo_overview ──────────────────────────────────────────────────────────
   server.registerTool(
     "repo_overview",
     {
+      title: "Summarize Lampa repo layout",
       description:
-        "Summarise the Lampa repository structure: top-level folders, likely entrypoints, build/doc scripts, and plugin list.",
-      inputSchema: {},
+        "Orient on the Lampa snapshot: commit metadata, top-level folders, plugins, entrypoints, npm scripts, and optionally JS/TS modules in one subfolder. Use this first on a new session (especially Workers). Do not use it to read file bytes (`read_source`), search contents (`search_code`), or list files by name (`find_files`). Read-only against the configured local checkout or R2 snapshot; no network. Missing repo → error. `subfolder` only adds a module listing; omit it for the compact overview. Stdio needs LAMPA_REPO_PATH; Worker auth is transport-level and does not change what this tool reads.",
+      inputSchema: {
+        subfolder: z
+          .string()
+          .optional()
+          .describe(
+            "Optional repo-relative folder whose JS/TS modules to list, e.g. 'src/components'. Omit for overview only."
+          ),
+      },
+      outputSchema: reportOutput,
+      annotations: READ_ONLY_SNAPSHOT,
     },
-    async () => {
+    async ({ subfolder }) => {
       if (!(await fileExists(config.fs))) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `Repository not found at ${config.label}. Set LAMPA_REPO_PATH.`,
-            },
-          ],
-        };
+        return fail(`Repository not found at ${config.label}. Set LAMPA_REPO_PATH.`);
       }
 
       interface PackageJson {
@@ -34,9 +38,10 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
       }
       const pkg = await readFileSafe(config.fs, "package.json");
       const pkgData = pkg ? (JSON.parse(pkg) as PackageJson) : {};
+      const meta = (await config.fs.getSnapshotMeta?.()) ?? null;
 
       const topLevel = (await config.fs.listDir())
-        .map((e) => `${e.type === "dir" ? "📁" : "📄"} ${e.name}`)
+        .map((e) => `${e.type === "dir" ? "[dir]" : "[file]"} ${e.name}`)
         .join("\n");
 
       const plugins = (await fileExists(config.fs, "plugins"))
@@ -65,19 +70,26 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
             .map((e) => `src/${e.name}`)
         : [];
 
-      const summary = [
+      const parts = [
         `# Lampa Repository Overview`,
         `**Path:** ${config.label}`,
         `**Name:** ${pkgData.name ?? "unknown"} v${pkgData.version ?? "?"}`,
+        ``,
+        `## Snapshot`,
+        `- commit: ${meta?.commit ?? "(local checkout — no snapshot commit)"}`,
+        `- generatedAt: ${meta?.generatedAt ?? "n/a"}`,
+        `- fileCount: ${meta?.fileCount ?? "n/a"}`,
+        `- totalBytes: ${meta?.totalBytes ?? "n/a"}`,
+        `- bundled: ${meta?.bundled ?? "n/a"}`,
         ``,
         `## Top-level`,
         topLevel,
         ``,
         `## Source directories`,
-        srcDirs.join("\n"),
+        srcDirs.join("\n") || "None.",
         ``,
         `## Plugins (${plugins.length})`,
-        plugins.join(", "),
+        plugins.join(", ") || "None.",
         ``,
         `## Entrypoints`,
         entrypoints.join("\n") || "None detected.",
@@ -86,164 +98,278 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
         scripts,
         ``,
         `## Key observations`,
-        `- Main app source: src/`,
+        `- Main app source: src/ — edit here, not public/ or build/`,
         `- Plugin system: plugins/ (each plugin is a self-contained subfolder)`,
-        `- Build output: public/ (static assets served to TV clients)`,
-        `- Language files: public/lang/ and src/lang/`,
-        `- Vendor libs: public/vender/`,
-        `- Specs: spec/ (Jest or similar)`,
-      ].join("\n");
+        `- Build output: public/ (do not edit; use resolve_edit_path)`,
+        `- Language files: src/lang/ (authoritative) and public/lang/ (generated)`,
+      ];
 
-      return { content: [{ type: "text" as const, text: summary }] };
-    }
-  );
-
-  // ── list_modules ───────────────────────────────────────────────────────────
-  server.registerTool(
-    "list_modules",
-    {
-      description: "List all JavaScript/TypeScript modules in a given subfolder of the Lampa repo.",
-      inputSchema: {
-        subfolder: z
-          .string()
-          .optional()
-          .describe("Relative path inside repo, e.g. 'src/components'. Defaults to 'src'."),
-      },
-    },
-    async ({ subfolder }) => {
-      const base = subfolder ?? "src";
-      if (!(await fileExists(config.fs, base))) {
-        return { content: [{ type: "text" as const, text: `Folder not found: ${subfolder}` }] };
+      if (subfolder) {
+        const base = subfolder;
+        if (!(await fileExists(config.fs, base))) {
+          parts.push(``, `## Modules in ${base}`, `Folder not found.`);
+        } else {
+          const files = await listFilesRecursive(config.fs, base, [".js", ".ts"]);
+          parts.push(
+            ``,
+            `## Modules in ${base} (${files.length})`,
+            files.join("\n") || "No modules found."
+          );
+        }
       }
-      const files = await listFilesRecursive(config.fs, base, [".js", ".ts"]);
-      return {
-        content: [{ type: "text" as const, text: files.join("\n") || "No modules found." }],
-      };
+
+      return ok(parts.join("\n"));
     }
   );
 
-  // ── find_files ─────────────────────────────────────────────────────────────
-  server.registerTool(
-    "find_files",
-    {
-      description: "Find files in the repo by name pattern or extension.",
-      inputSchema: {
-        pattern: z.string().describe("Substring or glob pattern to match against file names."),
-        ext: z.string().optional().describe("File extension filter, e.g. '.js', '.scss'."),
-      },
-    },
-    async ({ pattern, ext }) => {
-      const exts = ext ? [ext] : [];
-      const all = await listFilesRecursive(config.fs, "", exts);
-      const lower = pattern.toLowerCase();
-      const matches = all.filter((f) => basename(f).toLowerCase().includes(lower));
-      return {
-        content: [
-          { type: "text" as const, text: matches.join("\n") || `No files matching "${pattern}".` },
-        ],
-      };
-    }
-  );
-
-  // ── search_code ────────────────────────────────────────────────────────────
   server.registerTool(
     "search_code",
     {
+      title: "Search Lampa source contents",
       description:
-        "Search the repo source code for a text string or regex pattern. Returns file paths, line numbers, and short previews.",
+        "Search Lampa source file contents for a literal or regex and return path:line plus a preview. Use this when you know a symbol, string, or pattern. Do not use it to list files by name (`find_files`), dump API catalogs (`map_lampa`), or read one known path (`read_source`). Read-only against the configured snapshot; no network. `regex=true` for regular expressions (default is literal). `prefix` scopes to a folder and is preferred over `globs` when the area is known. No matches → empty markdown list, not an error.",
       inputSchema: {
-        query: z.string().describe("Text or regex to search for."),
+        query: z.string().describe("Text or regex to search for in file contents."),
         globs: z
           .array(z.string())
           .optional()
           .describe("File glob patterns to restrict search, e.g. ['*.js','*.ts']."),
-        regex: z.boolean().optional().describe("Treat query as a regex. Default false."),
+        regex: z.boolean().optional().describe("Treat query as a regex. Default false (literal)."),
         prefix: z
           .string()
           .optional()
-          .describe("Repo-relative folder to search within, e.g. 'src' or 'plugins'."),
+          .describe("Repo-relative folder to search within, e.g. 'src' or 'plugins/iptv'."),
       },
+      outputSchema: reportOutput,
+      annotations: READ_ONLY_SNAPSHOT,
     },
     async ({ query, globs, regex, prefix }) => {
       const matches = await searchCode(config.fs, query, globs ?? [], regex ?? false, prefix);
       if (matches.length === 0) {
-        return { content: [{ type: "text" as const, text: `No matches for "${query}".` }] };
+        return ok(`No matches for "${query}".`);
       }
       const lines = matches.map((m) => `${m.file}:${m.line}  ${m.text}`);
-      const header = `Found ${matches.length} match(es) for "${query}":\n`;
-      return { content: [{ type: "text" as const, text: header + lines.join("\n") }] };
+      return ok(`Found ${matches.length} match(es) for "${query}":\n${lines.join("\n")}`);
     }
   );
 
-  // ── read_file_segment ──────────────────────────────────────────────────────
   server.registerTool(
-    "read_file_segment",
+    "find_files",
     {
-      description: "Read a specific line range from a file in the repo.",
-      inputSchema: {
-        file: z.string().describe("Repo-relative path, e.g. 'src/app.js'."),
-        start_line: z.number().describe("First line to read (1-based)."),
-        end_line: z.number().describe("Last line to read (inclusive)."),
-      },
-    },
-    async ({ file, start_line, end_line }) => {
-      if (!(await fileExists(config.fs, file))) {
-        return { content: [{ type: "text" as const, text: `File not found: ${file}` }] };
-      }
-      const segment = await readSegment(config.fs, file, start_line, end_line);
-      return { content: [{ type: "text" as const, text: `\`\`\`\n${segment}\n\`\`\`` }] };
-    }
-  );
-
-  // ── list_scripts ───────────────────────────────────────────────────────────
-  server.registerTool(
-    "list_scripts",
-    {
-      description: "List all NPM scripts defined in package.json.",
-      inputSchema: {},
-    },
-    async () => {
-      const pkg = await readFileSafe(config.fs, "package.json");
-      if (!pkg) return { content: [{ type: "text" as const, text: "No package.json found." }] };
-      const data = JSON.parse(pkg) as { scripts?: Record<string, string> };
-      const scripts: Record<string, string> = data.scripts ?? {};
-      const lines = Object.entries(scripts).map(([k, v]) => `${k.padEnd(20)} → ${v}`);
-      return {
-        content: [{ type: "text" as const, text: lines.join("\n") || "No scripts defined." }],
-      };
-    }
-  );
-
-  // ── snapshot_info ──────────────────────────────────────────────────────────
-  server.registerTool(
-    "snapshot_info",
-    {
+      title: "Find Lampa files by name or feature",
       description:
-        "Show which Lampa source snapshot this MCP is serving (commit, generatedAt, file counts). Call this first on remote Workers.",
-      inputSchema: {},
+        "Locate repo-relative paths by filename, inferred Lampa feature, UI component, stylesheet, or spec file. Unlike `search_code`, this matches names/paths rather than file contents. Unlike `read_source`, it does not return file bytes. Use `mode=feature` for player/catalog/iptv-style feature maps; `mode=name` for a filename substring. Read-only snapshot. Missing query matches → empty list, not an error. `ext` only applies to `mode=name`.",
+      inputSchema: {
+        query: z
+          .string()
+          .describe(
+            "Filename substring, feature name, UI component, style module, or spec keyword depending on mode."
+          ),
+        mode: z
+          .enum(["name", "feature", "ui", "styles", "tests"])
+          .optional()
+          .describe(
+            "name (default)=filename; feature=Lampa feature map; ui=templates/components; styles=css/scss; tests=spec files."
+          ),
+        ext: z
+          .string()
+          .optional()
+          .describe("For mode=name only: extension filter, e.g. '.js' or '.scss'."),
+      },
+      outputSchema: reportOutput,
+      annotations: READ_ONLY_SNAPSHOT,
     },
-    async () => {
-      const meta = (await config.fs.getSnapshotMeta?.()) ?? null;
-      const body = {
-        label: config.label,
-        commit: meta?.commit ?? null,
-        generatedAt: meta?.generatedAt ?? null,
-        fileCount: meta?.fileCount ?? null,
-        totalBytes: meta?.totalBytes ?? null,
-        bundled: meta?.bundled ?? null,
-      };
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(body, null, 2) }],
-      };
+    async ({ query, mode = "name", ext }) => {
+      const lower = query.toLowerCase();
+
+      if (mode === "feature") {
+        const files = await inferFeatureFiles(config.fs, query);
+        const knownKeys = Object.keys(LAMPA_FEATURE_MAP).filter(
+          (k) => lower.includes(k) || k.includes(lower)
+        );
+        return ok(
+          [
+            `## Feature: "${query}"`,
+            ``,
+            `### Matched categories: ${knownKeys.join(", ") || "none (generic filename match only)"}`,
+            ``,
+            `### Relevant files (${files.length})`,
+            files.join("\n") || "No files found.",
+            ``,
+            `Next: \`read_source\` for bytes, \`trace_lampa\` for blast radius, \`plan_change\` before edits.`,
+          ].join("\n")
+        );
+      }
+
+      if (mode === "ui") {
+        const files = await listFilesRecursive(config.fs, "", [".js", ".html", ".scss", ".css"]);
+        const byFilename = files.filter((f) => basename(f).toLowerCase().includes(lower));
+        const byContent = (await searchCode(config.fs, query, ["*.js", "*.html"], false))
+          .filter(
+            (m) =>
+              m.text.toLowerCase().includes("template") ||
+              m.text.toLowerCase().includes("component") ||
+              m.text.toLowerCase().includes("render") ||
+              m.text.toLowerCase().includes("create")
+          )
+          .slice(0, 20)
+          .map((m) => `${m.file}:${m.line}  ${m.text}`);
+        return ok(
+          [
+            `## Files matching "${query}"`,
+            byFilename.join("\n") || "None.",
+            ``,
+            `## Code references (template/component/render context)`,
+            byContent.join("\n") || "None.",
+          ].join("\n")
+        );
+      }
+
+      if (mode === "styles") {
+        const cssFiles = await listFilesRecursive(config.fs, "", [".css", ".scss"]);
+        const direct = cssFiles.filter((f) => f.toLowerCase().includes(lower));
+        const byContent = (await searchCode(config.fs, query, ["*.css", "*.scss"], false))
+          .slice(0, 15)
+          .map((m) => `${m.file}:${m.line}  ${m.text}`);
+        return ok(
+          [
+            `## CSS/SCSS files for "${query}"`,
+            direct.join("\n") || "None.",
+            ``,
+            `## Style references mentioning "${query}"`,
+            byContent.join("\n") || "None.",
+          ].join("\n")
+        );
+      }
+
+      if (mode === "tests") {
+        const hasSpec = await fileExists(config.fs, "spec");
+        const specFiles = hasSpec
+          ? await listFilesRecursive(config.fs, "spec", [".js", ".ts", ".spec.js"])
+          : [];
+        const direct = specFiles.filter((f) => basename(f).toLowerCase().includes(lower));
+        const byContent: string[] = [];
+        for (const f of specFiles) {
+          const content = (await readFileSafe(config.fs, f)) ?? "";
+          if (content.toLowerCase().includes(lower)) byContent.push(f);
+        }
+        const all = [...new Set([...direct, ...byContent])];
+        return ok(
+          all.length > 0
+            ? `Related specs for "${query}":\n${all.join("\n")}`
+            : `No spec files found for "${query}". Spec directory: ${hasSpec ? "exists (spec/)" : "not found"}.`
+        );
+      }
+
+      const exts = ext ? [ext] : [];
+      const all = await listFilesRecursive(config.fs, "", exts);
+      const matches = all.filter((f) => basename(f).toLowerCase().includes(lower));
+      return ok(matches.join("\n") || `No files matching "${query}".`);
     }
   );
 
-  // ── resolve_edit_path ──────────────────────────────────────────────────────
+  server.registerTool(
+    "read_source",
+    {
+      title: "Read Lampa source file bytes",
+      description:
+        "Read bytes from one known path: a repo file, a src/core module, or a src/templates template. Unlike `search_code`/`find_files`, this returns contents of a single target. Large files truncate at `max_lines` (default 300) unless `start_line`/`end_line` pin a range — then only that inclusive 1-based range is returned. `kind=core` with no `file` lists src/core; `kind=template` with no `file` lists templates. Read-only snapshot; never writes. Missing path → error. Do not use this to dump catalogs (`map_lampa`).",
+      inputSchema: {
+        file: z
+          .string()
+          .optional()
+          .describe(
+            "Repo-relative path, core module name (kind=core), or template name (kind=template). Required for kind=file."
+          ),
+        kind: z
+          .enum(["file", "core", "template"])
+          .optional()
+          .describe(
+            "file (default)=any path; core=src/core module; template=src/templates markup."
+          ),
+        start_line: z
+          .number()
+          .optional()
+          .describe("First line to read (1-based). Pair with end_line."),
+        end_line: z
+          .number()
+          .optional()
+          .describe("Last line to read (inclusive). Pair with start_line."),
+        max_lines: z
+          .number()
+          .optional()
+          .describe(
+            "Cap when reading a full file. Default 300. Ignored when start_line/end_line are set."
+          ),
+        template_mode: z
+          .enum(["list", "html", "raw"])
+          .optional()
+          .describe(
+            "For kind=template: list catalog, html markup, or raw JS. Default list when file omitted."
+          ),
+      },
+      outputSchema: reportOutput,
+      annotations: READ_ONLY_SNAPSHOT,
+    },
+    async ({ file, kind = "file", start_line, end_line, max_lines = 300, template_mode }) => {
+      if (kind === "template") {
+        const mode = file ? (template_mode ?? "html") : (template_mode ?? "list");
+        if ((mode === "html" || mode === "raw") && !file) {
+          return fail("kind=template with mode html/raw requires `file` (template name).");
+        }
+        return ok(await formatTemplates(config.fs, mode, file));
+      }
+
+      if (kind === "core") {
+        const coreDir = "src/core";
+        if (!(await fileExists(config.fs, coreDir))) {
+          return fail("src/core/ not found in repository.");
+        }
+        if (!file) {
+          const entries = (await config.fs.listDir(coreDir)).sort((a, b) =>
+            a.name.localeCompare(b.name)
+          );
+          const dirs = entries.filter((e) => e.type === "dir").map((e) => `[dir] ${e.name}/`);
+          const files = entries.filter((e) => e.type === "file").map((e) => `[file] ${e.name}`);
+          return ok(
+            [
+              `# src/core/  (${entries.length} items)`,
+              ``,
+              `## Subdirectories`,
+              dirs.join("\n") || "none",
+              ``,
+              `## Files`,
+              files.join("\n") || "none",
+              ``,
+              `Pass file="<module>" with kind=core to read a specific module, e.g. file="lang".`,
+            ].join("\n")
+          );
+        }
+        const lower = file.toLowerCase().replace(/\.js$/, "");
+        const allFiles = await listFilesRecursive(config.fs, coreDir, [".js"]);
+        const match =
+          allFiles.find((f) => basename(f, ".js").toLowerCase() === lower) ??
+          allFiles.find((f) => basename(f).toLowerCase().includes(lower));
+        if (!match) {
+          const available = allFiles.map((f) => basename(f, ".js")).join(", ");
+          return fail(`Module "${file}" not found in src/core/.\nAvailable: ${available}`);
+        }
+        return readPath(config, match, start_line, end_line, max_lines);
+      }
+
+      if (!file) {
+        return fail("kind=file requires `file` (repo-relative path).");
+      }
+      return readPath(config, file, start_line, end_line, max_lines);
+    }
+  );
+
   server.registerTool(
     "resolve_edit_path",
     {
+      title: "Resolve authoritative Lampa edit path",
       description:
-        "Return the authoritative edit path for a Lampa change kind (lang, sass, template, component, plugin, core, interaction, settings). Prevents editing public/build copies.",
+        "Map a change kind (lang, sass, template, component, plugin, core, interaction, settings) to the authoritative src/ or plugins/ path and list generated copies to avoid. Use this before `plan_change` or `draft_patch` so you do not edit public/ or build/. Unlike `find_files`, this is a fixed landmark table, not a search. Read-only; does not write. Optional `name` is a plugin id or lang code.",
       inputSchema: {
         kind: z
           .enum([
@@ -262,21 +388,65 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
           .optional()
           .describe("Optional name, e.g. plugin id 'tracks' or lang code 'en'."),
       },
+      outputSchema: reportOutput,
+      annotations: READ_ONLY_SNAPSHOT,
     },
     async ({ kind, name }) => {
       const result = resolveEditPath(kind, name);
-      const text = [
-        `# Edit path: ${kind}${name ? ` (${name})` : ""}`,
-        ``,
-        `## Authoritative`,
-        ...result.authoritative.map((p) => `- ${p}`),
-        ``,
-        `## Avoid`,
-        ...result.avoid.map((p) => `- ${p}`),
-        ``,
-        result.notes,
-      ].join("\n");
-      return { content: [{ type: "text" as const, text }] };
+      return ok(
+        [
+          `# Edit path: ${kind}${name ? ` (${name})` : ""}`,
+          ``,
+          `## Authoritative`,
+          ...result.authoritative.map((p) => `- ${p}`),
+          ``,
+          `## Avoid`,
+          ...result.avoid.map((p) => `- ${p}`),
+          ``,
+          result.notes,
+        ].join("\n")
+      );
     }
+  );
+}
+
+async function readPath(
+  config: Config,
+  file: string,
+  start_line?: number,
+  end_line?: number,
+  max_lines = 300
+) {
+  if (!(await fileExists(config.fs, file))) {
+    return fail(`File not found: ${file}\nUse find_files or search_code to locate the path.`);
+  }
+
+  if (start_line != null && end_line != null) {
+    const segment = await readSegment(config.fs, file, start_line, end_line);
+    return ok(`# ${file}  lines ${start_line}-${end_line}\n\`\`\`\n${segment}\n\`\`\``);
+  }
+
+  const content = (await readFileSafe(config.fs, file)) ?? "";
+  const lines = content.split("\n");
+  const total = lines.length;
+  const truncated = total > max_lines;
+  const shown = truncated ? lines.slice(0, max_lines).join("\n") : content;
+  const base = basename(file);
+  const dot = base.lastIndexOf(".");
+  const ext = dot >= 0 ? base.slice(dot + 1) : "text";
+  const lang = ext === "ts" ? "typescript" : ext === "js" ? "javascript" : ext;
+
+  return ok(
+    [
+      `// ${file}  (${total} lines${truncated ? `, first ${max_lines} shown` : ""})`,
+      `\`\`\`${lang}`,
+      shown,
+      truncated
+        ? `\n// … ${total - max_lines} more lines omitted.\n// Re-call read_source with start_line=${max_lines + 1} and end_line to continue.`
+        : "",
+      "```",
+    ]
+      .filter((l) => l !== "")
+      .join("\n")
   );
 }
