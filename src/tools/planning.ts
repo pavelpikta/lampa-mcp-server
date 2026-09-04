@@ -70,7 +70,7 @@ export function registerPlanningTools(server: McpServer, config: Config): void {
     {
       title: "Plan a Lampa feature change",
       description:
-        "Generate a step-by-step implementation plan with suggested targets, reverse-ref impact, and coupling risks for a Lampa change. Call this before `draft_patch`. Unlike `draft_patch`, this does not invent diffs. Unlike `trace_lampa`, it covers a whole request rather than one file/event. Unlike `scaffold_plugin`, it plans edits to existing code rather than generating a new plugin. Read-only snapshot; never writes the repo. `scope_hint` narrows feature inference (e.g. 'plugins/iptv'). Always includes impact and risks — there is no separate impact tool.",
+        "Generate a step-by-step implementation plan with inferred targets, a reverse-ref sample, and coupling risks for a Lampa change. Call this before `draft_patch`; unlike `draft_patch` it does not invent diffs, unlike `trace_lampa` it covers a whole request rather than one file/event, unlike `scaffold_plugin` it plans edits to existing code. Inference from `request` (+ optional `scope_hint`) is heuristic — not a guarantee; the affected-surface list caps at ~12 files.",
       inputSchema: {
         request: z
           .string()

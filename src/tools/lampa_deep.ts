@@ -15,7 +15,7 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
     {
       title: "Analyze one Lampa plugin folder",
       description:
-        "Single-call report for one plugins/<name> folder: files, Lampa.* usage, Listener follow/send, settings, CSS, entry preview, plus how Lampa loads plugins (src/core/plugins.js). Omit `plugin` to get only the load-path explanation. Unlike `map_lampa`, this is scoped to one plugin. Unlike `trace_lampa`, it does not follow a single event/file across the tree. Unlike `validate_code`, it does not score conventions. Read-only snapshot. Unknown plugin name → error listing available folders.",
+        "Single-call report for one `plugins/<name>` folder: files, Lampa.* usage, Listener follow/send, settings, CSS, and an entry preview truncated to ~30 lines, plus how Lampa loads plugins (`src/core/plugins.js`). Omit `plugin` for the load-path only; unlike `map_lampa` this is one plugin, unlike `trace_lampa` it does not follow a single event/file, unlike `validate_code` it does not score conventions. Unknown plugin name → error listing available folders.",
       inputSchema: {
         plugin: z
           .string()
@@ -122,18 +122,18 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
     {
       title: "Trace one Lampa symbol through code",
       description:
-        "Follow one event, component, file, provider, or deprecated API through the snapshot graph. `mode=event` traces Listener follow/send; `lifecycle` analyses a component file; `deps` maps imports and reverse refs; `api_calls` lists fetch/provider sites; `upgrade` flags 2.x APIs to migrate to Maker. Unlike `map_lampa`, this is not a whole-catalog dump. Unlike `search_code`, it interprets structure (imports, events) rather than raw text. `target` is required except you may omit it only for `api_calls` (full index). Read-only. Missing file/event → markdown note, not a crash.",
+        "Follow one event, component, file, or provider through the snapshot graph — not a full catalog (`map_lampa`) and not raw grep (`search_code`). Examples: `mode=event` target=`app`; `lifecycle` target=`src/components/full.js`; `deps` a file path; `upgrade` a repo-relative file to scan for 2.x APIs; omit `target` only for `api_calls`. Missing `target` otherwise → error; unknown event → markdown note (not a crash); `deps` reverse-refs cap at 20.",
       inputSchema: {
         mode: z
           .enum(["event", "lifecycle", "deps", "api_calls", "upgrade"])
           .describe(
-            "event=Listener bus; lifecycle=component contract; deps=import blast radius; api_calls=external fetches; upgrade=2.x→Maker."
+            "event=Listener bus; lifecycle=component contract; deps=import blast radius; api_calls=external fetches; upgrade=scan a file for 2.x→Maker APIs."
           ),
         target: z
           .string()
           .optional()
           .describe(
-            "Event name, component name/path, file path, or provider keyword depending on mode. Required except api_calls."
+            "Required except api_calls. event: name e.g. 'app'/'player'; lifecycle: component name or path e.g. 'src/components/full.js'; deps/upgrade: repo-relative file path; api_calls: optional provider keyword."
           ),
       },
       outputSchema: reportOutput,

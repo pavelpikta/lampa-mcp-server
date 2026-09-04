@@ -89,7 +89,7 @@ export function registerCubTools(server: McpServer, config: Config): void {
     {
       title: "Guide to CUB cloud APIs in Lampa",
       description:
-        "Document how Lampa talks to CUB cloud from source only — not a live CUB client and not a substitute for cub.rip/developer. `topic=catalog` lists REST paths; `endpoint` details one path; `auth` covers device/add, headers, Permit, Premium, mirrors; `models` shows bookmark/timeline/favorite shapes; `sync` maps dump/changelog/WebSocket; `timeline_hash` explains Utils.hash. Unlike `map_lampa` topic=mirrors/socket, this is CUB-specific. Read-only snapshot; no network to CUB. `path` is required for topic=endpoint. `category`/`search` filter catalog only.",
+        "Document how Lampa talks to CUB from source — no HTTP to cub.rip, and not a substitute for cub.rip/developer. Unlike `map_lampa` topic=mirrors/socket, this is CUB-specific. `topic=catalog` lists REST paths (`category`/`search` filter catalog only); `endpoint` requires `path` (e.g. `bookmarks/dump`); `auth` covers device/add, headers, Permit, Premium, mirrors; `models` shows bookmark/timeline/favorite shapes; `sync` maps dump/changelog/WebSocket; `timeline_hash` explains Utils.hash.",
       inputSchema: {
         topic: z
           .enum(["catalog", "endpoint", "auth", "models", "sync", "timeline_hash"])
