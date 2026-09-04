@@ -1,8 +1,13 @@
 # lampa-mcp-server
 
-<a href="https://glama.ai/mcp/servers/pavelpikta/lampa-mcp-server">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/pavelpikta/lampa-mcp-server/badge" alt="lampa-mcp-server MCP server" />
-</a>
+[![lampa-mcp-server MCP server](https://glama.ai/mcp/servers/pavelpikta/lampa-mcp-server/badges/card.svg)](https://glama.ai/mcp/servers/pavelpikta/lampa-mcp-server)
+
+[![lampa-mcp-server MCP server](https://glama.ai/mcp/servers/pavelpikta/lampa-mcp-server/badges/score.svg)](https://glama.ai/mcp/servers/pavelpikta/lampa-mcp-server)
+[![TDQS](https://tdqs.dev/reports/qfx61dm6h0/badge.svg)](https://tdqs.dev/reports/qfx61dm6h0)
+
+[![CI](https://github.com/pavelpikta/lampa-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/pavelpikta/lampa-mcp-server/actions/workflows/ci.yml)
+[![Release](https://github.com/pavelpikta/lampa-mcp-server/actions/workflows/release.yml/badge.svg)](https://github.com/pavelpikta/lampa-mcp-server/actions/workflows/release.yml)
+[![Release](https://img.shields.io/github/v/release/pavelpikta/lampa-mcp-server?label=release)](https://github.com/pavelpikta/lampa-mcp-server/releases/latest)
 
 An [MCP](https://modelcontextprotocol.io) server for AI-assisted development on the [Lampa](https://github.com/yumata/lampa-source) open-source TV app.
 
