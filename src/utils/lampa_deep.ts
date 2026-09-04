@@ -365,11 +365,11 @@ export async function formatTemplates(
       .map(([group, files]) => `### ${group}\n${files.map((f) => `- ${f}`).join("\n")}`)
       .join("\n\n");
 
-    return `# Lampa UI Templates (${allFiles.length} files)\n\n${lines}\n\nUse \`name\` with mode=html or mode=raw to inspect a template.`;
+    return `# Lampa UI Templates (${allFiles.length} files)\n\n${lines}\n\nRe-call \`read_source\` with kind=template, file="<name>", and template_mode=html or raw.`;
   }
 
   if (!name) {
-    return `mode=${mode} requires a \`name\` parameter.\nUse list_templates (mode=list) to see all available templates.`;
+    return `template_mode=${mode} requires \`file\` (template name).\nCall \`read_source\` with kind=template and no file to list templates.`;
   }
 
   const lower = name.toLowerCase();
@@ -380,7 +380,7 @@ export async function formatTemplates(
   });
 
   if (matches.length === 0) {
-    return `No template matching "${name}" in src/templates/.\nUse list_templates (mode=list) to see all available templates.`;
+    return `No template matching "${name}" in src/templates/.\nCall \`read_source\` with kind=template and no file to list templates.`;
   }
 
   if (mode === "raw" || (mode === "list" && name)) {
