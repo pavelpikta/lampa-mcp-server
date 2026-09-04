@@ -23,7 +23,7 @@ export function registerValidationTools(server: McpServer, config: Config): void
     {
       title: "Validate Lampa plugin, grep, i18n, or build",
       description:
-        "Run checks and hints, not catalogs (`map_lampa`) and not edit plans (`plan_change`). `mode=plugin` scores a plugin against official pitfalls; `grep` scans the snapshot for TODOs/console.log/undefined/lang/hardcoded HTML (not a shell); `i18n` looks up `key` or, if omitted, coverage vs en.js; `build` returns the npm/gulp command for a goal — it does not run it. `target` is required for mode=plugin (folder or JS path); missing plugin → error listing folders.",
+        "Run checks and hints, not catalogs (`list_catalog`) and not edit plans (`plan_change`). `mode=plugin` scores a plugin against official pitfalls; `grep` scans the snapshot for TODOs/console.log/undefined/lang/hardcoded HTML (not a shell); `i18n` looks up `key` or, if omitted, coverage vs en.js; `build` returns the npm/gulp command for a goal — it does not run it. `checks` only for mode=grep (default all); `show_missing` only for i18n coverage (ignored when `key` is set); `goal` only for mode=build; `target` is required for mode=plugin (folder or JS path); missing plugin → error listing folders.",
       inputSchema: {
         mode: z
           .enum(["plugin", "grep", "i18n", "build"])
@@ -81,11 +81,11 @@ export function registerValidationTools(server: McpServer, config: Config): void
   );
 
   server.registerTool(
-    "explain_lampa",
+    "explain_docs",
     {
       title: "Explain Lampa docs, patterns, or packaging",
       description:
-        "Read written Lampa guides: official plugin chapters (`mode=plugin_docs`), a core development pattern with live snippets (`mode=pattern`), or gulp/npm packaging targets (`mode=packaging`). Not a live API catalog (`map_lampa`) and not grep (`search_code`). `plugin_docs`: pass `chapter` (01–13 or alias like pitfalls) or `query`; omit both for the TOC; `lang` is en (default) or ru. `pattern` requires the `pattern` enum. `packaging` reads gulpfile.js / package scripts — it does not execute gulp or npm.",
+        "Read written Lampa guides: official plugin chapters (`mode=plugin_docs`), a core development pattern with live snippets (`mode=pattern`), or gulp/npm packaging targets (`mode=packaging`). Not a live API catalog (`list_catalog`) and not grep (`search_code`). Example: `chapter=pitfalls` vs `query='SettingsApi'` when chapter is omitted; omit both for the TOC; `lang` is en (default) or ru; `pattern` requires the `pattern` enum; unknown chapter → error listing known ids. Snapshot-only; `packaging` reads gulpfile.js / package scripts — it does not execute gulp or npm.",
       inputSchema: {
         mode: z
           .enum(["plugin_docs", "pattern", "packaging"])
@@ -668,7 +668,7 @@ async function explainPattern(config: Config, pattern: PatternId) {
       keyPoints: [
         "- Create: `Lampa.Maker.make('Main', data, (m) => m.toggle(m.MASK.base, 'Callback'))`",
         "- Guard: `if (Lampa.Manifest.app_digital >= 300)`",
-        "- Use map_lampa topic=maker and trace_lampa mode=upgrade",
+        "- Use list_catalog topic=maker and trace_symbol mode=upgrade",
       ],
     },
     controller: {

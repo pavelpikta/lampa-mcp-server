@@ -170,7 +170,7 @@ export async function formatPluginGuideToc(
     ``,
     `Source: \`${dir}/\` — official plugin docs in the Lampa snapshot. Do not copy into the MCP repo.`,
     ``,
-    `Use \`explain_lampa\` mode=plugin_docs to read a chapter. Preferred bootstrap:`,
+    `Use \`explain_docs\` mode=plugin_docs to read a chapter. Preferred bootstrap:`,
     ``,
     "```js",
     "if (window.appready) init()",

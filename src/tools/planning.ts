@@ -57,7 +57,7 @@ async function buildImpactSection(fs: RepoFs, files: string[]): Promise<string> 
 
   if (sections.length === 1) {
     sections.push(
-      "No existing target files to analyse. Infer targets first, then trace_lampa mode=deps."
+      "No existing target files to analyse. Infer targets first, then trace_symbol mode=deps."
     );
   }
 
@@ -70,7 +70,7 @@ export function registerPlanningTools(server: McpServer, config: Config): void {
     {
       title: "Plan a Lampa feature change",
       description:
-        "Generate a step-by-step implementation plan with inferred targets, a reverse-ref sample, and coupling risks for a Lampa change. Call this before `draft_patch`; unlike `draft_patch` it does not invent diffs, unlike `trace_lampa` it covers a whole request rather than one file/event, unlike `scaffold_plugin` it plans edits to existing code. Inference from `request` (+ optional `scope_hint`) is heuristic — not a guarantee; the affected-surface list caps at ~12 files.",
+        "Generate a step-by-step implementation plan with inferred targets, a reverse-ref sample, and coupling risks for a Lampa change. Call this before `draft_patch`; unlike `draft_patch` it does not invent diffs, unlike `trace_symbol` it covers a whole request rather than one file/event, unlike `scaffold_plugin` it plans edits to existing code. `request='add a sleep timer'` + `scope_hint='player'` concatenates into feature inference; empty inference still returns a plan (not an error). Snapshot-only — does not execute or write; heuristic — not a guarantee; affected-surface list caps at ~12 files.",
       inputSchema: {
         request: z
           .string()
@@ -152,7 +152,7 @@ export function registerPlanningTools(server: McpServer, config: Config): void {
         `1. Read targets with \`read_source\`.`,
         `2. Identify insertion points; prefer existing Listener hooks (\`scaffold_plugin\` kind=hook).`,
         `3. Check i18n with \`validate_code\` mode=i18n if adding UI text.`,
-        `4. Confirm no existing plugin already handles this (\`repo_overview\` subfolder=plugins).`,
+        `4. Confirm no existing plugin already handles this (\`summarize_repo\` subfolder=plugins).`,
         ``,
         `## Step 5 — Risks (${risks.length})`,
         risks.length > 0

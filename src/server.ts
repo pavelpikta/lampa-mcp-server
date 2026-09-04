@@ -13,12 +13,12 @@ import pkg from "../package.json" with { type: "json" };
 const INSTRUCTIONS = `Lampa MCP helps agents understand and change the Lampa TV app source (local checkout or R2 snapshot). Tools are read-only: they never write the repo. Do not edit public/ or build/ — call resolve_edit_path first.
 
 Preferred loop:
-repo_overview → explain_lampa(mode=plugin_docs) | plugin_deep_dive
-  → search_code | map_lampa | trace_lampa
+summarize_repo → explain_docs(mode=plugin_docs) | analyze_plugin
+  → search_code | list_catalog | trace_symbol
   → resolve_edit_path → plan_change → scaffold_plugin | draft_patch
   → validate_code
 
-CUB cloud work: cub_guide (topic=auth → catalog → sync). For CUB mirrors in source, map_lampa topic=mirrors.
+CUB cloud work: guide_cub (topic=auth → catalog → sync). For CUB mirrors in source, list_catalog topic=mirrors.
 Stdio: LAMPA_REPO_PATH. Worker: GitHub PAT is transport auth only; tools still read the snapshot.`;
 
 export function createLampaServer(config: Config): McpServer {

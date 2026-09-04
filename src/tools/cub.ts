@@ -85,11 +85,11 @@ const CUB_CATEGORIES = [
 
 export function registerCubTools(server: McpServer, config: Config): void {
   server.registerTool(
-    "cub_guide",
+    "guide_cub",
     {
       title: "Guide to CUB cloud APIs in Lampa",
       description:
-        "Document how Lampa talks to CUB from source — no HTTP to cub.rip, and not a substitute for cub.rip/developer. Unlike `map_lampa` topic=mirrors/socket, this is CUB-specific. `topic=catalog` lists REST paths (`category`/`search` filter catalog only); `endpoint` requires `path` (e.g. `bookmarks/dump`); `auth` covers device/add, headers, Permit, Premium, mirrors; `models` shows bookmark/timeline/favorite shapes; `sync` maps dump/changelog/WebSocket; `timeline_hash` explains Utils.hash.",
+        "Document how Lampa talks to CUB from source — no HTTP to cub.rip, and not a substitute for cub.rip/developer. Unlike `list_catalog` topic=mirrors/socket, this is CUB-specific. `topic=catalog` lists REST paths (`category`/`search` filter catalog only); `endpoint` requires `path` (e.g. `bookmarks/dump`); `auth` covers device/add, headers, Permit, Premium, mirrors; `models` shows bookmark/timeline/favorite shapes; `sync` maps dump/changelog/WebSocket; `timeline_hash` explains Utils.hash.",
       inputSchema: {
         topic: z
           .enum(["catalog", "endpoint", "auth", "models", "sync", "timeline_hash"])
@@ -190,7 +190,7 @@ async function cubCatalog(config: Config, category: string, search?: string) {
       ``,
       ...sections,
       ``,
-      `Use cub_guide topic=endpoint with path=… for params and source context.`,
+      `Use guide_cub topic=endpoint with path=… for params and source context.`,
     ].join("\n\n")
   );
 }
@@ -204,7 +204,7 @@ async function cubEndpoint(config: Config, endpointPath: string) {
       .map((e) => e.path)
       .join(", ");
     return fail(
-      `Endpoint "${endpointPath}" not found in Lampa source.\n\nSample paths: ${sample}\n\nUse cub_guide topic=catalog.`
+      `Endpoint "${endpointPath}" not found in Lampa source.\n\nSample paths: ${sample}\n\nUse guide_cub topic=catalog.`
     );
   }
   return ok(await formatEndpointDetail(ep, config.fs));
@@ -262,7 +262,7 @@ function cubAuth(topic: string) {
       `## Mirrors`,
       `- \`Manifest.cub_mirrors\` — cub.rip plus user-added`,
       `- \`Manifest.cub_domain\` — active mirror`,
-      `- Use map_lampa topic=mirrors for full resolution logic`
+      `- Use list_catalog topic=mirrors for full resolution logic`
     );
   }
   return ok(sections.join("\n"));
@@ -298,7 +298,7 @@ function cubModels(model: string) {
     sections.push(
       ``,
       `## Favorite categories`,
-      `Mapped 1:1 to bookmark types. Use map_lampa topic=favorites for the full list.`
+      `Mapped 1:1 to bookmark types. Use list_catalog topic=favorites for the full list.`
     );
   }
   if (model === "all" || model === "account") {

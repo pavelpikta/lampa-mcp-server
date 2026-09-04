@@ -21,26 +21,26 @@ The server exposes **14 tools** (plus Worker-only `whoami`) and curated resource
 
 | Tool                | Role                                                      |
 | ------------------- | --------------------------------------------------------- |
-| `repo_overview`     | Snapshot metadata, tree, scripts, optional module listing |
+| `summarize_repo`    | Snapshot metadata, tree, scripts, optional module listing |
 | `search_code`       | Content/regex search                                      |
 | `find_files`        | Paths by name, feature, UI, styles, or specs              |
 | `read_source`       | File / core module / template bytes                       |
-| `plugin_deep_dive`  | One plugin folder (+ load path if name omitted)           |
-| `map_lampa`         | Catalogs (API, events, storage, Maker, …)                 |
-| `trace_lampa`       | Follow one event, component, file, or deprecated API      |
-| `explain_lampa`     | Plugin docs, patterns, packaging                          |
+| `analyze_plugin`    | One plugin folder (+ load path if name omitted)           |
+| `list_catalog`      | Catalogs (API, events, storage, Maker, …)                 |
+| `trace_symbol`      | Follow one event, component, file, or deprecated API      |
+| `explain_docs`      | Plugin docs, patterns, packaging                          |
 | `plan_change`       | Plan + targets + impact + risks                           |
 | `draft_patch`       | Suggested diffs (does not write)                          |
 | `scaffold_plugin`   | New plugin / setting / hook text (does not write)         |
 | `validate_code`     | Plugin score, grep, i18n, build hint                      |
-| `cub_guide`         | CUB APIs as used in Lampa source                          |
+| `guide_cub`         | CUB APIs as used in Lampa source                          |
 | `resolve_edit_path` | Authoritative `src/` / `plugins/` path                    |
 
 Preferred agent loop:
 
 ```
-repo_overview → explain_lampa(mode=plugin_docs) | plugin_deep_dive
-  → search_code | map_lampa | trace_lampa
+summarize_repo → explain_docs(mode=plugin_docs) | analyze_plugin
+  → search_code | list_catalog | trace_symbol
   → resolve_edit_path → plan_change → scaffold_plugin | draft_patch
   → validate_code
 ```
@@ -202,8 +202,8 @@ Then point the MCP inspector / client at `http://localhost:8787/mcp` with `Autho
 ## Recommended agent workflow
 
 ```
-repo_overview → explain_lampa(mode=plugin_docs) | plugin_deep_dive
-    → search_code | map_lampa | trace_lampa
+summarize_repo → explain_docs(mode=plugin_docs) | analyze_plugin
+    → search_code | list_catalog | trace_symbol
     → resolve_edit_path → plan_change → scaffold_plugin | draft_patch
     → validate_code
 ```
@@ -213,27 +213,33 @@ Plugin authoring must follow official `docs/en` (Listener app:ready, SettingsApi
 For CUB account/sync work:
 
 ```
-cub_guide(topic=auth) → cub_guide(topic=catalog) → cub_guide(topic=sync)
-    → cub_guide(topic=models) → cub_guide(topic=endpoint)
+guide_cub(topic=auth) → guide_cub(topic=catalog) → guide_cub(topic=sync)
+    → guide_cub(topic=models) → guide_cub(topic=endpoint)
 ```
 
-### Breaking change (v1.x → consolidated tools)
+### Breaking change (v1.x → verb_noun tools)
 
-Aliases and thin wrappers were removed so the catalog stays in the 3–15 range Glama scores. Call the replacement instead:
+Aliases, thin wrappers, and v1.7 noun-first names were removed so the catalog stays in the 3–15 range Glama scores. Call the replacement instead:
 
 | Removed                                                                                                                    | Use instead                        |
 | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `snapshot_info`, `list_scripts`, `list_modules`                                                                            | `repo_overview`                    |
+| `snapshot_info`, `list_scripts`, `list_modules`                                                                            | `summarize_repo`                   |
 | `read_file`, `read_file_segment`, `get_core_module`, `list_templates`, `extract_template_html`                             | `read_source`                      |
 | `find_feature`, `find_ui_component`, `find_styles_for_module`, `list_related_tests`                                        | `find_files` (`mode=…`)            |
 | `plan_feature_change`, `impact_analysis`, `suggest_edit_targets`, `risk_scan`                                              | `plan_change`                      |
 | `scaffold_plugin_integration`, `generate_plugin_boilerplate`, `add_setting`, `insert_hook`                                 | `scaffold_plugin`                  |
 | `validate_plugin`, `run_grep_checks`, `i18n_check`, `find_translation_keys`, `translation_coverage`, `run_build_hint`      | `validate_code`                    |
-| `plugin_docs`, `doc_lookup`, `explain_lampa_pattern`, `platform_packaging_guide`                                           | `explain_lampa`                    |
-| `lampa_api_surface`, `list_all_events`, `get_storage_schema`, `get_network_map`, `find_settings`, Maker/socket/flags/…     | `map_lampa` (`topic=…`)            |
-| `trace_event`, `component_lifecycle`, `module_dependency_map`, `find_api_calls`, `upgrade_migration_checker`               | `trace_lampa`                      |
-| `cub_api_catalog`, `cub_endpoint_detail`, `cub_auth_guide`, `cub_data_models`, `cub_sync_guide`, `cub_timeline_hash_guide` | `cub_guide`                        |
-| `plugin_load_path`                                                                                                         | `plugin_deep_dive` (omit `plugin`) |
+| `plugin_docs`, `doc_lookup`, `explain_lampa_pattern`, `platform_packaging_guide`                                           | `explain_docs`                     |
+| `lampa_api_surface`, `list_all_events`, `get_storage_schema`, `get_network_map`, `find_settings`, Maker/socket/flags/…     | `list_catalog` (`topic=…`)         |
+| `trace_event`, `component_lifecycle`, `module_dependency_map`, `find_api_calls`, `upgrade_migration_checker`               | `trace_symbol`                     |
+| `cub_api_catalog`, `cub_endpoint_detail`, `cub_auth_guide`, `cub_data_models`, `cub_sync_guide`, `cub_timeline_hash_guide` | `guide_cub`                        |
+| `plugin_load_path`                                                                                                         | `analyze_plugin` (omit `plugin`)   |
+| `repo_overview`                                                                                                            | `summarize_repo`                   |
+| `plugin_deep_dive`                                                                                                         | `analyze_plugin`                   |
+| `map_lampa`                                                                                                                | `list_catalog`                     |
+| `trace_lampa`                                                                                                              | `trace_symbol`                     |
+| `explain_lampa`                                                                                                            | `explain_docs`                     |
+| `cub_guide`                                                                                                                | `guide_cub`                        |
 
 ---
 

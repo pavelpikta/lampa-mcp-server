@@ -66,11 +66,11 @@ const MAP_TOPICS = [
 
 export function registerAnalysisTools(server: McpServer, config: Config): void {
   server.registerTool(
-    "map_lampa",
+    "list_catalog",
     {
       title: "Catalog Lampa APIs and indexes",
       description:
-        "Dump one static catalog from the Lampa snapshot per call (`topic`: API surface, events, Storage keys, network URLs, settings, providers, Maker, socket, activity, flags, ContentRows, favorites, or CUB mirrors). Not a query (`search_code`), not a single-symbol walk (`trace_lampa`), not written docs (`explain_lampa`), and not a live CUB client (`cub_guide`). `query` filters the chosen catalog only; `detail=true` only for `topic=events` (per-file listener/emitter lists; default false); empty catalog → markdown, not an error; on R2, full-tree `events`/`storage` need a prebuilt index — pass `query` or a narrower topic if it is missing.",
+        "Dump one static catalog from the Lampa snapshot per call. Not a query (`search_code`), not a single-symbol walk (`trace_symbol`), not written docs (`explain_docs`), and not a live CUB client (`guide_cub`). `api_surface`/`events`/`storage` take `scope` (default all); `detail=true` only for events; `query` filters that catalog (API module, event name, storage key, component, flag, or network folder). Example: `topic=events` `query='player'` `detail=true`. Other groups: network/settings/providers; Maker/socket/activity; flags/ContentRows/favorites/mirrors. Empty catalog → markdown, not an error; on R2, full-tree events/storage need a prebuilt index — pass `query` or a narrower topic if it is missing.",
       inputSchema: {
         topic: z
           .enum(MAP_TOPICS)
@@ -81,7 +81,7 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
           .string()
           .optional()
           .describe(
-            "Filter the chosen catalog only (not a repo-wide search): API module, storage key, component name, flag keyword, or folder (for network)."
+            "Filter the chosen catalog only (not a repo-wide search): API module, event name, storage key, component name, flag keyword, or folder (for network)."
           ),
         scope: z
           .enum(["all", "plugins", "src"])
@@ -102,7 +102,7 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
         case "api_surface":
           return mapApiSurface(config, query, scope);
         case "events":
-          return mapEvents(config, scope, detail);
+          return mapEvents(config, scope, detail, query);
         case "storage":
           return mapStorage(config, scope, query);
         case "network":
@@ -180,9 +180,9 @@ async function mapApiSurface(config: Config, mod?: string, scope = "all") {
   return ok([header, "", ...sections].join("\n"));
 }
 
-async function mapEvents(config: Config, scope = "all", detail = false) {
+async function mapEvents(config: Config, scope = "all", detail = false, query?: string) {
   const indexed = await config.fs.readIndex?.("events");
-  if (indexed != null && scope === "all" && !detail) {
+  if (indexed != null && scope === "all" && !detail && !query) {
     return ok(indexText(indexed));
   }
   if (indexed == null && isR2Backend(config) && scope === "all") {
@@ -191,7 +191,7 @@ async function mapEvents(config: Config, scope = "all", detail = false) {
         `# Events index missing`,
         ``,
         `Full-tree event scans are disabled on R2 backends without a prebuilt index.`,
-        `Pass scope=src or scope=plugins, or use trace_lampa mode=event for one event.`,
+        `Pass scope=src or scope=plugins, or use trace_symbol mode=event for one event.`,
       ].join("\n")
     );
   }
@@ -218,11 +218,15 @@ async function mapEvents(config: Config, scope = "all", detail = false) {
     }
   }
 
-  const sorted = Object.entries(events).sort(([, a], [, b]) => {
+  let sorted = Object.entries(events).sort(([, a], [, b]) => {
     const ta = a.listeners.length + a.emitters.length;
     const tb = b.listeners.length + b.emitters.length;
     return tb - ta;
   });
+  if (query) {
+    const q = query.toLowerCase();
+    sorted = sorted.filter(([evt]) => evt.toLowerCase().includes(q));
+  }
   const rows = [
     `# Lampa Event Bus  (scope: ${scope}, ${sorted.length} distinct event${sorted.length > 1 ? "s" : ""})`,
     ``,
@@ -332,7 +336,7 @@ async function mapStorage(config: Config, scope = "all", key?: string) {
 async function mapNetwork(config: Config, scope?: string) {
   const searchRoot = scope ?? "plugins";
   if (!(await fileExists(config.fs, searchRoot))) {
-    return fail(`Path not found: ${searchRoot}. Check with repo_overview.`);
+    return fail(`Path not found: ${searchRoot}. Check with summarize_repo.`);
   }
   const jsFiles = await listFilesRecursive(config.fs, searchRoot, [".js"]);
   const map: Record<string, { urls: string[]; proxies: string[]; embedVars: string[] }> = {};
@@ -416,7 +420,7 @@ async function mapProviders(config: Config) {
       ``,
       sections.join("\n\n"),
       ``,
-      `Use plugin_deep_dive with plugin=online or plugin=online_prestige for source analysis.`,
+      `Use analyze_plugin with plugin=online or plugin=online_prestige for source analysis.`,
     ].join("\n")
   );
 }

@@ -10,11 +10,11 @@ import { READ_ONLY_SNAPSHOT, fail, ok, reportOutput } from "./meta.js";
 
 export function registerDiscoveryTools(server: McpServer, config: Config): void {
   server.registerTool(
-    "repo_overview",
+    "summarize_repo",
     {
       title: "Summarize Lampa repo layout",
       description:
-        "Summarize the Lampa snapshot — commit metadata, top-level folders, plugins, entrypoints, and npm scripts — for first-session orientation. Do not use it to read bytes (`read_source`), search contents (`search_code`), or list files by name (`find_files`). Optional `subfolder` lists JS/TS under that prefix (recursive within it; unknown folder → error); missing repo → error; stdio needs LAMPA_REPO_PATH and Worker PAT is transport-only.",
+        "Summarize the Lampa snapshot — commit metadata, top-level folders, plugins, entrypoints, and npm scripts — for first-session orientation. Do not use it to read bytes (`read_source`), search contents (`search_code`), or list files by name (`find_files`). Omit `subfolder` for the compact overview; `subfolder='src/components'` lists JS/TS files only (not all files) recursively under that prefix; unknown folder or missing repo → error; stdio needs LAMPA_REPO_PATH and Worker PAT is transport-only.",
       inputSchema: {
         subfolder: z
           .string()
@@ -126,7 +126,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Search Lampa source contents",
       description:
-        "Search Lampa source contents for a literal or regex and return path:line plus a preview. Use this when you know a symbol or pattern; do not use it to list files by name (`find_files`), dump catalogs (`map_lampa`), or read one known path (`read_source`). Default is literal and case-sensitive (`regex=true` uses RegExp as written, no implicit `i`); default extensions .js/.ts/.css/.scss/.html/.json unless `globs`; prefer `prefix` over `globs`; max 100 hits, 5 per file, 200-char preview; no matches → empty markdown, not an error.",
+        "Search Lampa source contents for a literal or regex and return path:line plus a preview. Use this when you know a symbol or pattern; do not use it to list files by name (`find_files`), dump catalogs (`list_catalog`), or read one known path (`read_source`). Default is literal and case-sensitive (`regex=true` uses RegExp as written, no implicit `i`); `prefix` walks a folder and `globs` still filter extensions (they combine); invalid regex → error; default extensions .js/.ts/.css/.scss/.html/.json unless `globs`; max 100 hits, 5 per file, 200-char preview; no matches → empty markdown, not an error.",
       inputSchema: {
         query: z
           .string()
@@ -147,14 +147,23 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
           .string()
           .optional()
           .describe(
-            "Repo-relative folder to walk, e.g. 'src' or 'plugins/iptv'. Preferred over globs when the area is known."
+            "Repo-relative folder to walk, e.g. 'src' or 'plugins/iptv'. Combines with globs (prefix walks, globs filter extensions)."
           ),
       },
       outputSchema: reportOutput,
       annotations: READ_ONLY_SNAPSHOT,
     },
     async ({ query, globs, regex, prefix }) => {
-      const matches = await searchCode(config.fs, query, globs ?? [], regex ?? false, prefix);
+      let matches;
+      try {
+        matches = await searchCode(config.fs, query, globs ?? [], regex ?? false, prefix);
+      } catch (err) {
+        if (regex) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return fail(`Invalid regex: ${msg}`);
+        }
+        throw err;
+      }
       if (matches.length === 0) {
         return ok(`No matches for "${query}".`);
       }
@@ -168,7 +177,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Find Lampa files by name or feature",
       description:
-        "Locate repo-relative paths by filename, Lampa feature, UI component, stylesheet, or spec — a path finder, not content grep. Unlike `search_code`, this matches names/paths (except `mode=ui`/`styles`, which also attach up to 20/15 content hits); unlike `read_source`, it does not return file bytes. `mode=feature` uses a built-in Lampa feature map plus filename match, not full-text search; `ext` only for `mode=name` (default); empty matches → list, not an error.",
+        "Locate repo-relative paths by filename, Lampa feature, UI component, stylesheet, or spec — a path finder, not content grep. Unlike `search_code`, this matches names/paths (except `mode=ui`/`styles`, which also attach up to 20/15 content hits); unlike `read_source`, it does not return file bytes. Example: `mode=feature` `query='player'` uses the built-in feature map; `mode=name` `query='full'` `ext='.js'` filters by extension (`ext` ignored unless mode=name); empty matches → list, not an error.",
       inputSchema: {
         query: z
           .string()
@@ -208,7 +217,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
             `### Relevant files (${files.length})`,
             files.join("\n") || "No files found.",
             ``,
-            `Next: \`read_source\` for bytes, \`trace_lampa\` for blast radius, \`plan_change\` before edits.`,
+            `Next: \`read_source\` for bytes, \`trace_symbol\` for blast radius, \`plan_change\` before edits.`,
           ].join("\n")
         );
       }
@@ -285,7 +294,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Read Lampa source file bytes",
       description:
-        "Read bytes from one known path: a repo file, a src/core module, or a src/templates template. Unlike `search_code`/`find_files`, this returns contents of a single target — do not dump catalogs (`map_lampa`). Full files truncate at `max_lines` (default 300); pass `start_line`+`end_line` (1-based, inclusive) for a range (ignores `max_lines`); `kind=file` requires `file`; omit `file` with `kind=core`/`template` to list; missing path → error.",
+        "Read bytes from one known path: a repo file, a src/core module, or a src/templates template. Unlike `search_code`/`find_files`, this returns contents of a single target — do not dump catalogs (`list_catalog`). Full files truncate at `max_lines` (default 300); pass `start_line`+`end_line` (1-based, inclusive) for a range (ignores `max_lines`); `kind=file` requires `file`; omit `file` with `kind=core`/`template` to list; missing path → error.",
       inputSchema: {
         file: z
           .string()
@@ -381,7 +390,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Resolve authoritative Lampa edit path",
       description:
-        "Map a change kind (lang, sass, template, component, plugin, core, interaction, settings) to the authoritative src/ or plugins/ path and list generated public/build copies to avoid. Call this before `plan_change` or `draft_patch`; unlike `find_files`, this is a fixed landmark table, not a search. Optional `name` is a plugin id or lang code; unknown name does not fail — it returns the kind's default paths.",
+        "Map a change kind (lang, sass, template, component, plugin, core, interaction, settings) to the authoritative src/ or plugins/ path and list generated public/build copies to avoid. Call this before `plan_change` or `draft_patch`; unlike `find_files`, this is a fixed landmark table, not a search. Example: `kind=plugin` `name='tracks'` vs `kind=lang` `name='en'`; unknown name does not fail — it returns the kind's default paths. Snapshot-only — does not write files.",
       inputSchema: {
         kind: z
           .enum([

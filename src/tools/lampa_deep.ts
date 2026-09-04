@@ -11,17 +11,17 @@ import { READ_ONLY_SNAPSHOT, fail, ok, reportOutput } from "./meta.js";
 
 export function registerLampaDeepTools(server: McpServer, config: Config): void {
   server.registerTool(
-    "plugin_deep_dive",
+    "analyze_plugin",
     {
       title: "Analyze one Lampa plugin folder",
       description:
-        "Single-call report for one `plugins/<name>` folder: files, Lampa.* usage, Listener follow/send, settings, CSS, and an entry preview truncated to ~30 lines, plus how Lampa loads plugins (`src/core/plugins.js`). Omit `plugin` for the load-path only; unlike `map_lampa` this is one plugin, unlike `trace_lampa` it does not follow a single event/file, unlike `validate_code` it does not score conventions. Unknown plugin name → error listing available folders.",
+        "Single-call report for one `plugins/<name>` folder: files, Lampa.* usage, Listener follow/send, settings, CSS, and an entry preview truncated to ~30 lines, plus how Lampa loads plugins (`src/core/plugins.js`). Unlike `list_catalog` this is one plugin, unlike `trace_symbol` it does not follow a single event/file, unlike `validate_code` it does not score conventions. `plugin` is the case-sensitive directory name under plugins/ (e.g. `online`, `iptv`, `collections`) — not a manifest id; omit `plugin` for load-path only; unknown folder → error listing available folders.",
       inputSchema: {
         plugin: z
           .string()
           .optional()
           .describe(
-            "Plugin folder inside plugins/, e.g. 'online', 'iptv', 'collections'. Omit for load-path only."
+            "Case-sensitive plugins/ directory name (not a manifest id), e.g. 'online', 'iptv', 'collections'. Omit for load-path only."
           ),
       },
       outputSchema: reportOutput,
@@ -118,11 +118,11 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
   );
 
   server.registerTool(
-    "trace_lampa",
+    "trace_symbol",
     {
       title: "Trace one Lampa symbol through code",
       description:
-        "Follow one event, component, file, or provider through the snapshot graph — not a full catalog (`map_lampa`) and not raw grep (`search_code`). Examples: `mode=event` target=`app`; `lifecycle` target=`src/components/full.js`; `deps` a file path; `upgrade` a repo-relative file to scan for 2.x APIs; omit `target` only for `api_calls`. Missing `target` otherwise → error; unknown event → markdown note (not a crash); `deps` reverse-refs cap at 20.",
+        "Follow one event, component, file, or provider through the snapshot graph — not a full catalog (`list_catalog`) and not raw grep (`search_code`). Examples: `mode=event` target=`app`; `lifecycle` target=`src/components/full.js`; `deps` a file path; `upgrade` a repo-relative file path (not an API name); omit `target` only for `api_calls` (optional `target` is a provider keyword). Missing `target` otherwise → error; unknown event → markdown note (not a crash); `deps` reverse-refs cap at 20.",
       inputSchema: {
         mode: z
           .enum(["event", "lifecycle", "deps", "api_calls", "upgrade"])
@@ -428,7 +428,7 @@ async function upgradeCheck(config: Config, file: string) {
       ...rows,
       ``,
       upgradeExists
-        ? `See UPGRADE.md and explain_lampa mode=pattern pattern=maker.`
+        ? `See UPGRADE.md and explain_docs mode=pattern pattern=maker.`
         : `UPGRADE.md not found in repo.`,
       ``,
       `Version gate: \`if (Lampa.Manifest.app_digital >= 300) { /* use Maker */ }\``,
