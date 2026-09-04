@@ -20,7 +20,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Summarize Lampa repo layout",
       description:
-        "Summarize the Lampa snapshot — commit metadata, top-level folders, plugins, entrypoints, and npm scripts — for first-session orientation. Do not use it to read bytes (`read_source`), search contents (`search_code`), or list files by name (`find_files`). Omit `subfolder` for the compact overview; `subfolder='src/components'` adds a recursive JS/TS-only listing under that prefix, matched case-sensitively against the snapshot's real path casing (an empty result is a valid 'no JS/TS files here' answer, not an error) on top of the same overview; unknown folder or missing repo → error; stdio needs LAMPA_REPO_PATH and Worker PAT is transport-only (no extra scopes or rate limits beyond GitHub's).",
+        "Summarize the Lampa snapshot — commit metadata, top-level folders, plugins, entrypoints, and npm scripts — for first-session orientation. Returns a single markdown report (see output schema), not JSON. Do not use it to read bytes (`read_source`), search contents (`search_code`), or list files by name (`find_files`). Omit `subfolder` for the compact overview; `subfolder='src/components'` adds a recursive JS/TS-only listing under that prefix, matched case-sensitively against the snapshot's real path casing (an empty result is a valid 'no JS/TS files here' answer, not an error) on top of the same overview; unknown folder or missing repo → error; stdio needs LAMPA_REPO_PATH and Worker PAT is transport-only (no extra scopes or rate limits beyond GitHub's).",
       inputSchema: {
         subfolder: z
           .string()

@@ -123,7 +123,7 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
     {
       title: "Trace one Lampa symbol through code",
       description:
-        "Follow one event, component, file, or provider through the snapshot graph — not a full catalog (`list_catalog`) and not raw grep (`search_code`). Examples: `mode=event` target=`app`; `lifecycle` target=`src/components/full.js`; `deps` a file path; `upgrade` a repo-relative file path (not an API name); omit `target` only for `api_calls` (optional `target` is a provider keyword). Missing `target` otherwise → error; unknown event → markdown note (not a crash); `deps` reverse-refs cap at 20.",
+        "Follow one event, component, file, or provider through the snapshot graph — not a full catalog (`list_catalog`) and not raw grep (`search_code`). Returns a markdown report (see output schema); large result sets are truncated with an explicit count, never silently paginated. Examples: mode=event target='app'; lifecycle target='src/components/full.js'; deps a file path; upgrade a repo-relative file path (not an API name); omit target only for api_calls (optional target is a provider keyword). Missing target otherwise → error; unknown event → markdown note (not a crash); deps reverse-refs cap at 20.",
       inputSchema: {
         mode: z
           .enum(["event", "lifecycle", "deps", "api_calls", "upgrade"])
