@@ -77,7 +77,6 @@ updates:
       include: "scope"
     cooldown:
       default-days: 3
-      semver-major-days: 7
     groups:
       actions:
         patterns:
