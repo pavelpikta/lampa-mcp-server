@@ -35,9 +35,9 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
       if (!(await fileExists(config.fs, pluginDir))) {
         const available = (await fileExists(config.fs, "plugins"))
           ? (await config.fs.listDir("plugins"))
-            .filter((e) => e.type === "dir")
-            .map((e) => e.name)
-            .join(", ")
+              .filter((e) => e.type === "dir")
+              .map((e) => e.name)
+              .join(", ")
           : "plugins/ directory not found";
         return fail(`Plugin "${plugin}" not found.\nAvailable plugins: ${available}`);
       }
@@ -67,25 +67,25 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
       const apiBlock =
         Object.entries(lampaApis).length > 0
           ? Object.entries(lampaApis)
-            .sort(([, a], [, b]) => b.length - a.length)
-            .map(
-              ([api, files]) =>
-                `- **Lampa.${api}** (${files.length} file${files.length > 1 ? "s" : ""})`
-            )
-            .join("\n")
+              .sort(([, a], [, b]) => b.length - a.length)
+              .map(
+                ([api, files]) =>
+                  `- **Lampa.${api}** (${files.length} file${files.length > 1 ? "s" : ""})`
+              )
+              .join("\n")
           : "No Lampa.* API calls detected.";
 
       const followBlock =
         Object.keys(follows).length > 0
           ? Object.entries(follows)
-            .map(([evt, files]) => `- \`${evt}\`  ← ${files.join(", ")}`)
-            .join("\n")
+              .map(([evt, files]) => `- \`${evt}\`  ← ${files.join(", ")}`)
+              .join("\n")
           : "None.";
       const sendBlock =
         Object.keys(sends).length > 0
           ? Object.entries(sends)
-            .map(([evt, files]) => `- \`${evt}\`  → ${files.join(", ")}`)
-            .join("\n")
+              .map(([evt, files]) => `- \`${evt}\`  → ${files.join(", ")}`)
+              .join("\n")
           : "None.";
 
       return ok(
@@ -255,14 +255,14 @@ async function traceEvent(config: Config, event: string): Promise<string> {
   const followBlock =
     follows.length > 0
       ? follows
-        .map((m) => `- **${m.file}** line ${m.line}  \`${m.text.trim().slice(0, 120)}\``)
-        .join("\n")
+          .map((m) => `- **${m.file}** line ${m.line}  \`${m.text.trim().slice(0, 120)}\``)
+          .join("\n")
       : "No listeners found.";
   const sendBlock =
     sends.length > 0
       ? sends
-        .map((m) => `- **${m.file}** line ${m.line}  \`${m.text.trim().slice(0, 120)}\``)
-        .join("\n")
+          .map((m) => `- **${m.file}** line ${m.line}  \`${m.text.trim().slice(0, 120)}\``)
+          .join("\n")
       : "No emitters found.";
   const notFound =
     follows.length === 0 && sends.length === 0
@@ -312,14 +312,14 @@ async function lifecycle(config: Config, component: string) {
   const followBlock =
     Object.keys(summary.events.follows).length > 0
       ? Object.keys(summary.events.follows)
-        .map((e) => `- follows \`${e}\``)
-        .join("\n")
+          .map((e) => `- follows \`${e}\``)
+          .join("\n")
       : "None.";
   const sendBlock =
     Object.keys(summary.events.sends).length > 0
       ? Object.keys(summary.events.sends)
-        .map((e) => `- sends \`${e}\``)
-        .join("\n")
+          .map((e) => `- sends \`${e}\``)
+          .join("\n")
       : "None.";
   const fmtHits = (arr: Array<{ line: number; text: string }>) =>
     arr.length > 0

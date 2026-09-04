@@ -509,7 +509,7 @@ async function formatHookGuide(config: Config, trigger: string): Promise<string>
     ``,
     `## Live code hits (keyword: "${keyword}")`,
     liveHits.slice(0, 20).join("\n") ||
-    "No matching Listener.follow hits. Narrow the trigger or use search_code with prefix=src.",
+      "No matching Listener.follow hits. Narrow the trigger or use search_code with prefix=src.",
   ].join("\n");
 }
 

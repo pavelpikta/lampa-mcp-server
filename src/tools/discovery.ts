@@ -56,8 +56,8 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
 
       const scripts = pkgData.scripts
         ? Object.entries(pkgData.scripts)
-          .map(([k, v]) => `  ${k}: ${v}`)
-          .join("\n")
+            .map(([k, v]) => `  ${k}: ${v}`)
+            .join("\n")
         : "None found.";
 
       const entrypoints: string[] = [];
@@ -72,8 +72,8 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
 
       const srcDirs = (await fileExists(config.fs, "src"))
         ? (await config.fs.listDir("src"))
-          .filter((e) => e.type === "dir")
-          .map((e) => `src/${e.name}`)
+            .filter((e) => e.type === "dir")
+            .map((e) => `src/${e.name}`)
         : [];
 
       const parts = [
