@@ -1,3 +1,9 @@
+## [1.7.0](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.6.0...v1.7.0) (2026-09-04)
+
+### Features
+
+* **ci:** add cache-dependency-path to CI workflows ([d9f2e8e](https://github.com/pavelpikta/lampa-mcp-server/commit/d9f2e8e0e0bca2e80553f160fa3955b261255118))
+
 ## [1.6.0](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.5.0...v1.6.0) (2026-09-04)
 
 ### Features
