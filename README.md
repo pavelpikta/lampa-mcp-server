@@ -1,5 +1,9 @@
 # lampa-mcp-server
 
+<a href="https://glama.ai/mcp/servers/pavelpikta/lampa-mcp-server">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/pavelpikta/lampa-mcp-server/badge" alt="lampa-mcp-server MCP server" />
+</a>
+
 An [MCP](https://modelcontextprotocol.io) server for AI-assisted development on the [Lampa](https://github.com/yumata/lampa-source) open-source TV app.
 
 It gives AI agents (Claude, Cursor, etc.) structured, read-only access to the Lampa source tree — so they understand the repo before making changes.
