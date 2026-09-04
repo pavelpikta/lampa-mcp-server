@@ -1,3 +1,10 @@
+## [1.6.0](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.5.0...v1.6.0) (2026-09-04)
+
+### Features
+
+* add glama.json configuration and update README with project badge ([258f508](https://github.com/pavelpikta/lampa-mcp-server/commit/258f5088cf6d8f49602c14abd2e227507ce9d3e2))
+* consolidate tools and enhance documentation ([#33](https://github.com/pavelpikta/lampa-mcp-server/issues/33)) ([ca07a1b](https://github.com/pavelpikta/lampa-mcp-server/commit/ca07a1b21d043ebde878cdf3f3b3ec37b591af95))
+
 ## [1.5.0](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.4.0...v1.5.0) (2026-09-01)
 
 ### Features
