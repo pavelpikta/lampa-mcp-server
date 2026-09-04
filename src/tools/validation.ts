@@ -23,17 +23,19 @@ export function registerValidationTools(server: McpServer, config: Config): void
     {
       title: "Validate Lampa plugin, grep, i18n, or build",
       description:
-        "Run checks, not catalogs: `mode=plugin` scores a plugin against official pitfalls; `grep` scans TODOs/console.log/undefined/lang/hardcoded HTML; `i18n` looks up keys or coverage vs en.js; `build` returns the npm/gulp command for a goal. Unlike `map_lampa`, this judges or hints rather than listing APIs. Unlike `plan_change`, it does not plan edits. `target` is the plugin folder or JS path for mode=plugin. For i18n, pass `key` for a lookup, otherwise coverage. Read-only snapshot; never writes. Missing plugin → error listing folders.",
+        "Run checks and hints, not catalogs (`map_lampa`) and not edit plans (`plan_change`). `mode=plugin` scores a plugin against official pitfalls; `grep` scans the snapshot for TODOs/console.log/undefined/lang/hardcoded HTML (not a shell); `i18n` looks up `key` or, if omitted, coverage vs en.js; `build` returns the npm/gulp command for a goal — it does not run it. `target` is required for mode=plugin (folder or JS path); missing plugin → error listing folders.",
       inputSchema: {
         mode: z
           .enum(["plugin", "grep", "i18n", "build"])
           .describe(
-            "plugin=convention score; grep=quality scans; i18n=keys/coverage; build=command hint."
+            "plugin=convention score; grep=snapshot quality scans (not a shell); i18n=keys/coverage; build=command hint (does not run npm/gulp)."
           ),
         target: z
           .string()
           .optional()
-          .describe("For mode=plugin: plugin folder or repo-relative JS path."),
+          .describe(
+            "Required for mode=plugin: plugin folder name or repo-relative JS path. Missing plugin → error listing folders."
+          ),
         checks: z
           .array(
             z.enum([
@@ -57,7 +59,7 @@ export function registerValidationTools(server: McpServer, config: Config): void
         goal: z
           .enum(["build", "dev", "test", "doc", "lint"])
           .optional()
-          .describe("For mode=build: which command to hint. Default build."),
+          .describe("For mode=build: which command to hint (does not execute). Default build."),
       },
       outputSchema: reportOutput,
       annotations: READ_ONLY_SNAPSHOT,
@@ -83,7 +85,7 @@ export function registerValidationTools(server: McpServer, config: Config): void
     {
       title: "Explain Lampa docs, patterns, or packaging",
       description:
-        "Read documentation and written guides: official plugin chapters (`mode=plugin_docs`), a core development pattern with live snippets (`mode=pattern`), or gulp/npm packaging targets (`mode=packaging`). Unlike `map_lampa`, this is docs/explanation, not a live API catalog. Unlike `search_code`, it is structured chapters/patterns. For plugin_docs, pass `chapter` (01–13 or alias like pitfalls) or `query`; omit both for the TOC. `lang` is en (default) or ru. For pattern, pass `pattern` enum. Read-only snapshot; packaging reads gulpfile.js, it does not run gulp.",
+        "Read written Lampa guides: official plugin chapters (`mode=plugin_docs`), a core development pattern with live snippets (`mode=pattern`), or gulp/npm packaging targets (`mode=packaging`). Not a live API catalog (`map_lampa`) and not grep (`search_code`). `plugin_docs`: pass `chapter` (01–13 or alias like pitfalls) or `query`; omit both for the TOC; `lang` is en (default) or ru. `pattern` requires the `pattern` enum. `packaging` reads gulpfile.js / package scripts — it does not execute gulp or npm.",
       inputSchema: {
         mode: z
           .enum(["plugin_docs", "pattern", "packaging"])

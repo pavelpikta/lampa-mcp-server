@@ -47,7 +47,7 @@ function createServer(env: WorkerEnv) {
     {
       title: "Show authenticated GitHub user",
       description:
-        "Return the GitHub login for this Worker MCP session. Worker-only; not part of the shared Lampa tool set. Use it to confirm PAT auth before calling repo tools. Does not read Lampa source. Read-only; no side effects. Unauthenticated sessions return an error.",
+        "Return the GitHub login for this Worker MCP session. Worker-only — not in the stdio catalog; use it to confirm PAT auth before calling repo tools. Does not read Lampa source. Unauthenticated sessions return an error.",
       inputSchema: {},
       outputSchema: reportOutput,
       annotations: READ_ONLY_SNAPSHOT,

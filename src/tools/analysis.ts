@@ -70,7 +70,7 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
     {
       title: "Catalog Lampa APIs and indexes",
       description:
-        "Dump a static catalog from the Lampa snapshot: API surface, event bus, Storage keys, network URLs, settings, streaming providers, Maker modules, WebSocket protocol, activity registry, feature flags, ContentRows, favorites, or CUB mirrors. Unlike `search_code`, this is a full index, not a query. Unlike `trace_lampa`, it does not follow one symbol through callers. Unlike `explain_lampa`, it is live source, not docs. Pick one `topic`. Optional `query` filters that catalog (module name, event, storage key, component, flag). Read-only snapshot; no live CUB/network. Empty catalogs return markdown, not an error. On R2, full-tree `events`/`storage` need prebuilt indexes — pass `query` or a narrower topic if the index is missing.",
+        "Dump one static catalog from the Lampa snapshot per call (`topic`: API surface, events, Storage keys, network URLs, settings, providers, Maker, socket, activity, flags, ContentRows, favorites, or CUB mirrors). Not a query (`search_code`), not a single-symbol walk (`trace_lampa`), not written docs (`explain_lampa`), and not a live CUB client (`cub_guide`). `query` filters the chosen catalog only; `detail=true` only for `topic=events` (per-file listener/emitter lists; default false); empty catalog → markdown, not an error; on R2, full-tree `events`/`storage` need a prebuilt index — pass `query` or a narrower topic if it is missing.",
       inputSchema: {
         topic: z
           .enum(MAP_TOPICS)
@@ -81,7 +81,7 @@ export function registerAnalysisTools(server: McpServer, config: Config): void {
           .string()
           .optional()
           .describe(
-            "Optional filter: API module, storage key, component name, flag keyword, or folder (for network)."
+            "Filter the chosen catalog only (not a repo-wide search): API module, storage key, component name, flag keyword, or folder (for network)."
           ),
         scope: z
           .enum(["all", "plugins", "src"])

@@ -14,13 +14,13 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Summarize Lampa repo layout",
       description:
-        "Orient on the Lampa snapshot: commit metadata, top-level folders, plugins, entrypoints, npm scripts, and optionally JS/TS modules in one subfolder. Use this first on a new session (especially Workers). Do not use it to read file bytes (`read_source`), search contents (`search_code`), or list files by name (`find_files`). Read-only against the configured local checkout or R2 snapshot; no network. Missing repo → error. `subfolder` only adds a module listing; omit it for the compact overview. Stdio needs LAMPA_REPO_PATH; Worker auth is transport-level and does not change what this tool reads.",
+        "Summarize the Lampa snapshot — commit metadata, top-level folders, plugins, entrypoints, and npm scripts — for first-session orientation. Do not use it to read bytes (`read_source`), search contents (`search_code`), or list files by name (`find_files`). Optional `subfolder` lists JS/TS under that prefix (recursive within it; unknown folder → error); missing repo → error; stdio needs LAMPA_REPO_PATH and Worker PAT is transport-only.",
       inputSchema: {
         subfolder: z
           .string()
           .optional()
           .describe(
-            "Optional repo-relative folder whose JS/TS modules to list, e.g. 'src/components'. Omit for overview only."
+            "Repo-relative prefix whose JS/TS files to list recursively, e.g. 'src/components'. Omit for the compact overview. Unknown folder → error."
           ),
       },
       outputSchema: reportOutput,
@@ -107,15 +107,14 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
       if (subfolder) {
         const base = subfolder;
         if (!(await fileExists(config.fs, base))) {
-          parts.push(``, `## Modules in ${base}`, `Folder not found.`);
-        } else {
-          const files = await listFilesRecursive(config.fs, base, [".js", ".ts"]);
-          parts.push(
-            ``,
-            `## Modules in ${base} (${files.length})`,
-            files.join("\n") || "No modules found."
-          );
+          return fail(`Folder not found: ${base}`);
         }
+        const files = await listFilesRecursive(config.fs, base, [".js", ".ts"]);
+        parts.push(
+          ``,
+          `## Modules in ${base} (${files.length})`,
+          files.join("\n") || "No modules found."
+        );
       }
 
       return ok(parts.join("\n"));
@@ -127,18 +126,29 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Search Lampa source contents",
       description:
-        "Search Lampa source file contents for a literal or regex and return path:line plus a preview. Use this when you know a symbol, string, or pattern. Do not use it to list files by name (`find_files`), dump API catalogs (`map_lampa`), or read one known path (`read_source`). Read-only against the configured snapshot; no network. `regex=true` for regular expressions (default is literal). `prefix` scopes to a folder and is preferred over `globs` when the area is known. No matches → empty markdown list, not an error.",
+        "Search Lampa source contents for a literal or regex and return path:line plus a preview. Use this when you know a symbol or pattern; do not use it to list files by name (`find_files`), dump catalogs (`map_lampa`), or read one known path (`read_source`). Default is literal and case-sensitive (`regex=true` uses RegExp as written, no implicit `i`); default extensions .js/.ts/.css/.scss/.html/.json unless `globs`; prefer `prefix` over `globs`; max 100 hits, 5 per file, 200-char preview; no matches → empty markdown, not an error.",
       inputSchema: {
-        query: z.string().describe("Text or regex to search for in file contents."),
+        query: z
+          .string()
+          .describe("Literal substring (default, case-sensitive) or regex when regex=true."),
         globs: z
           .array(z.string())
           .optional()
-          .describe("File glob patterns to restrict search, e.g. ['*.js','*.ts']."),
-        regex: z.boolean().optional().describe("Treat query as a regex. Default false (literal)."),
+          .describe(
+            "Extension globs to restrict search, e.g. ['*.js','*.ts']. When omitted, searches .js/.ts/.css/.scss/.html/.json."
+          ),
+        regex: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true, compile query as a JS RegExp with no extra flags (no implicit case-insensitive). Default false (literal)."
+          ),
         prefix: z
           .string()
           .optional()
-          .describe("Repo-relative folder to search within, e.g. 'src' or 'plugins/iptv'."),
+          .describe(
+            "Repo-relative folder to walk, e.g. 'src' or 'plugins/iptv'. Preferred over globs when the area is known."
+          ),
       },
       outputSchema: reportOutput,
       annotations: READ_ONLY_SNAPSHOT,
@@ -158,23 +168,25 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Find Lampa files by name or feature",
       description:
-        "Locate repo-relative paths by filename, inferred Lampa feature, UI component, stylesheet, or spec file. Unlike `search_code`, this matches names/paths rather than file contents. Unlike `read_source`, it does not return file bytes. Use `mode=feature` for player/catalog/iptv-style feature maps; `mode=name` for a filename substring. Read-only snapshot. Missing query matches → empty list, not an error. `ext` only applies to `mode=name`.",
+        "Locate repo-relative paths by filename, Lampa feature, UI component, stylesheet, or spec — a path finder, not content grep. Unlike `search_code`, this matches names/paths (except `mode=ui`/`styles`, which also attach up to 20/15 content hits); unlike `read_source`, it does not return file bytes. `mode=feature` uses a built-in Lampa feature map plus filename match, not full-text search; `ext` only for `mode=name` (default); empty matches → list, not an error.",
       inputSchema: {
         query: z
           .string()
           .describe(
-            "Filename substring, feature name, UI component, style module, or spec keyword depending on mode."
+            "Filename substring (mode=name), feature name (mode=feature, e.g. player/catalog/iptv), UI component, style module, or spec keyword."
           ),
         mode: z
           .enum(["name", "feature", "ui", "styles", "tests"])
           .optional()
           .describe(
-            "name (default)=filename; feature=Lampa feature map; ui=templates/components; styles=css/scss; tests=spec files."
+            "name (default)=filename substring; feature=built-in Lampa feature map + filename; ui=templates/components (+ up to 20 content hits); styles=css/scss (+ up to 15 content hits); tests=spec files."
           ),
         ext: z
           .string()
           .optional()
-          .describe("For mode=name only: extension filter, e.g. '.js' or '.scss'."),
+          .describe(
+            "For mode=name only: extension filter, e.g. '.js' or '.scss'. Ignored otherwise."
+          ),
       },
       outputSchema: reportOutput,
       annotations: READ_ONLY_SNAPSHOT,
@@ -273,7 +285,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Read Lampa source file bytes",
       description:
-        "Read bytes from one known path: a repo file, a src/core module, or a src/templates template. Unlike `search_code`/`find_files`, this returns contents of a single target. Large files truncate at `max_lines` (default 300) unless `start_line`/`end_line` pin a range — then only that inclusive 1-based range is returned. `kind=core` with no `file` lists src/core; `kind=template` with no `file` lists templates. Read-only snapshot; never writes. Missing path → error. Do not use this to dump catalogs (`map_lampa`).",
+        "Read bytes from one known path: a repo file, a src/core module, or a src/templates template. Unlike `search_code`/`find_files`, this returns contents of a single target — do not dump catalogs (`map_lampa`). Full files truncate at `max_lines` (default 300); pass `start_line`+`end_line` (1-based, inclusive) for a range (ignores `max_lines`); `kind=file` requires `file`; omit `file` with `kind=core`/`template` to list; missing path → error.",
       inputSchema: {
         file: z
           .string()
@@ -369,7 +381,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Resolve authoritative Lampa edit path",
       description:
-        "Map a change kind (lang, sass, template, component, plugin, core, interaction, settings) to the authoritative src/ or plugins/ path and list generated copies to avoid. Use this before `plan_change` or `draft_patch` so you do not edit public/ or build/. Unlike `find_files`, this is a fixed landmark table, not a search. Read-only; does not write. Optional `name` is a plugin id or lang code.",
+        "Map a change kind (lang, sass, template, component, plugin, core, interaction, settings) to the authoritative src/ or plugins/ path and list generated public/build copies to avoid. Call this before `plan_change` or `draft_patch`; unlike `find_files`, this is a fixed landmark table, not a search. Optional `name` is a plugin id or lang code; unknown name does not fail — it returns the kind's default paths.",
       inputSchema: {
         kind: z
           .enum([
@@ -386,7 +398,9 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
         name: z
           .string()
           .optional()
-          .describe("Optional name, e.g. plugin id 'tracks' or lang code 'en'."),
+          .describe(
+            "Optional plugin id (e.g. 'tracks') or lang code (e.g. 'en'). Unknown values still return the kind's default paths."
+          ),
       },
       outputSchema: reportOutput,
       annotations: READ_ONLY_SNAPSHOT,

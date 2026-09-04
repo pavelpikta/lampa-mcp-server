@@ -583,17 +583,21 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     {
       title: "Draft a Lampa unified diff",
       description:
-        "Suggest unified-diff patches anchored to real symbols in inferred or listed target files. Requires a prior `plan_change` (pass it as plan_context). Unlike `plan_change`, this invents TODO diffs; unlike `scaffold_plugin`, it patches existing files rather than generating a new plugin. **Does not write the repository** — it only returns text. Read-only snapshot. Missing files are noted in the report. Prefer `read_source` on the anchor region before applying anything by hand.",
+        "Returns TODO unified diffs as text only — does not write the repository. Best with `plan_context` from `plan_change`; without it, infers up to 5 files from `request` (weaker). Unlike `plan_change`, this invents diffs; unlike `scaffold_plugin`, it patches existing files rather than new-plugin boilerplate. Missing files are noted; apply by hand after `read_source` on the anchor region.",
       inputSchema: {
         request: z.string().describe("The change to implement."),
         target_files: z
           .array(z.string())
           .optional()
-          .describe("Files to focus on (repo-relative paths). Inferred from request if omitted."),
+          .describe(
+            "Repo-relative files to patch. If omitted, up to 5 files are inferred from request (weaker than plan_context)."
+          ),
         plan_context: z
           .string()
           .optional()
-          .describe("Paste the output of plan_change here for best results."),
+          .describe(
+            "Optional paste of plan_change output. Recommended; the tool still runs without it."
+          ),
       },
       outputSchema: reportOutput,
       annotations: READ_ONLY_SNAPSHOT,
@@ -648,7 +652,7 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     {
       title: "Generate Lampa plugin, setting, or hook text",
       description:
-        "Generate new Lampa code as markdown: a full plugin scaffold (`kind=plugin`), a SettingsApi snippet (`kind=setting`), or the best Listener/Player hook for a trigger (`kind=hook`). Unlike `draft_patch`, this creates new boilerplate rather than diffs against existing files. **Does not write the repository.** `kind=plugin` needs plugin_name + description; `kind=setting` needs key + label; `kind=hook` needs trigger. plugin_kind picks screen/player/context-menu/settings-only for kind=plugin. Then call `validate_code` mode=plugin on the result.",
+        "Returns markdown only; does not write the repository. Emits a full plugin scaffold (`kind=plugin`), a SettingsApi snippet (`kind=setting`), or the best Listener/Player hook (`kind=hook`) — not a patch against existing files (`draft_patch`). `kind=plugin` needs plugin_name + description; `plugin_kind` is screen (default) | player | context-menu | settings-only for `kind=plugin` only; `kind=setting` needs key + label + type; `kind=hook` needs trigger. Then call `validate_code` mode=plugin on the result.",
       inputSchema: {
         kind: z
           .enum(["plugin", "setting", "hook"])
