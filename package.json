@@ -12,7 +12,7 @@
     "lampa-mcp-server": "dist/index.js"
   },
   "scripts": {
-    "build": "npm run types:worker && tsc",
+    "build": "npm run types:worker && tsc -p tsconfig.build.json",
     "dev": "npm run build && npm start",
     "start": "node dist/index.js",
     "typecheck": "npm run types:worker && tsc --noEmit",
@@ -20,6 +20,8 @@
     "lint:fix": "eslint src --fix",
     "format": "prettier --write src scripts",
     "format:check": "prettier --check src scripts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "types:worker": "wrangler types",
     "dev:worker": "wrangler dev",
     "deploy": "wrangler deploy",
@@ -47,6 +49,7 @@
     "semantic-release": "^25.0.2",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.69.0",
+    "vitest": "^5.0.0",
     "wrangler": "^4.127.1"
   },
   "engines": {

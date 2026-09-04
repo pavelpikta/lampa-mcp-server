@@ -2,7 +2,13 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { Config } from "../config.js";
 import { basename } from "../fs/paths.js";
-import { listFilesRecursive, readFileSafe, readSegment, fileExists } from "../utils/fs.js";
+import {
+  listFilesRecursive,
+  readFileSafe,
+  readSegment,
+  fileExists,
+  parseJsonSafe,
+} from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
 import { inferFeatureFiles, LAMPA_FEATURE_MAP, resolveEditPath } from "../utils/lampa.js";
 import { formatTemplates } from "../utils/lampa_deep.js";
@@ -14,7 +20,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Summarize Lampa repo layout",
       description:
-        "Summarize the Lampa snapshot — commit metadata, top-level folders, plugins, entrypoints, and npm scripts — for first-session orientation. Do not use it to read bytes (`read_source`), search contents (`search_code`), or list files by name (`find_files`). Omit `subfolder` for the compact overview; `subfolder='src/components'` lists JS/TS files only (not all files) recursively under that prefix; unknown folder or missing repo → error; stdio needs LAMPA_REPO_PATH and Worker PAT is transport-only.",
+        "Summarize the Lampa snapshot — commit metadata, top-level folders, plugins, entrypoints, and npm scripts — for first-session orientation. Do not use it to read bytes (`read_source`), search contents (`search_code`), or list files by name (`find_files`). Omit `subfolder` for the compact overview; `subfolder='src/components'` adds a recursive JS/TS-only listing under that prefix (an empty result is a valid 'no JS/TS files here' answer, not an error) on top of the same overview; unknown folder or missing repo → error; stdio needs LAMPA_REPO_PATH and Worker PAT is transport-only (no extra scopes or rate limits beyond GitHub's).",
       inputSchema: {
         subfolder: z
           .string()
@@ -37,7 +43,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
         scripts?: Record<string, string>;
       }
       const pkg = await readFileSafe(config.fs, "package.json");
-      const pkgData = pkg ? (JSON.parse(pkg) as PackageJson) : {};
+      const pkgData = parseJsonSafe<PackageJson>(pkg) ?? {};
       const meta = (await config.fs.getSnapshotMeta?.()) ?? null;
 
       const topLevel = (await config.fs.listDir())
@@ -126,7 +132,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Search Lampa source contents",
       description:
-        "Search Lampa source contents for a literal or regex and return path:line plus a preview. Use this when you know a symbol or pattern; do not use it to list files by name (`find_files`), dump catalogs (`list_catalog`), or read one known path (`read_source`). Default is literal and case-sensitive (`regex=true` uses RegExp as written, no implicit `i`); `prefix` walks a folder and `globs` still filter extensions (they combine); invalid regex → error; default extensions .js/.ts/.css/.scss/.html/.json unless `globs`; max 100 hits, 5 per file, 200-char preview; no matches → empty markdown, not an error.",
+        "Search Lampa source contents for a literal or regex and return path:line plus a preview. Use this when you know a symbol or pattern; do not use it to list files by name (`find_files`), dump catalogs (`list_catalog`), or read one known path (`read_source`).\nDefaults: literal, case-sensitive match (`regex=true` compiles RegExp exactly as written — no implicit `i`); extensions .js/.ts/.css/.scss/.html/.json unless `globs` is set.\n`prefix` narrows which folder is walked and `globs` still filters extensions within it — the two combine rather than override each other.\nLimits: 100 hits total, 5 per file, 200-char preview per line (fixed, to keep results small enough for one call); invalid regex → error naming the bad pattern; no matches → empty markdown, not an error.",
       inputSchema: {
         query: z
           .string()
@@ -233,6 +239,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
               m.text.toLowerCase().includes("render") ||
               m.text.toLowerCase().includes("create")
           )
+          // Matches the "up to 20 content hits" stated in find_files's tool description.
           .slice(0, 20)
           .map((m) => `${m.file}:${m.line}  ${m.text}`);
         return ok(
@@ -250,6 +257,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
         const cssFiles = await listFilesRecursive(config.fs, "", [".css", ".scss"]);
         const direct = cssFiles.filter((f) => f.toLowerCase().includes(lower));
         const byContent = (await searchCode(config.fs, query, ["*.css", "*.scss"], false))
+          // Matches the "up to 15 content hits" stated in find_files's tool description.
           .slice(0, 15)
           .map((m) => `${m.file}:${m.line}  ${m.text}`);
         return ok(
@@ -390,7 +398,7 @@ export function registerDiscoveryTools(server: McpServer, config: Config): void 
     {
       title: "Resolve authoritative Lampa edit path",
       description:
-        "Map a change kind (lang, sass, template, component, plugin, core, interaction, settings) to the authoritative src/ or plugins/ path and list generated public/build copies to avoid. Call this before `plan_change` or `draft_patch`; unlike `find_files`, this is a fixed landmark table, not a search. Example: `kind=plugin` `name='tracks'` vs `kind=lang` `name='en'`; unknown name does not fail — it returns the kind's default paths. Snapshot-only — does not write files.",
+        "Map a change kind (lang, sass, template, component, plugin, core, interaction, settings) to the authoritative src/ or plugins/ path and list generated public/build copies to avoid. Call this before `plan_change` or `draft_patch`; unlike `find_files`, this is a fixed landmark table look-up (no filesystem walk, no content search), not a search.\nExample: `kind=plugin` `name='tracks'` returns plugins/tracks specifically, vs `kind=lang` `name='en'` returns src/lang/en.js; an unrecognized `name` does not fail — it falls back to the kind's default authoritative/avoid paths so the call always returns something actionable.",
       inputSchema: {
         kind: z
           .enum([

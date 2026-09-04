@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { Config } from "../config.js";
 import { joinRepo } from "../fs/paths.js";
-import { readFileSafe, fileExists } from "../utils/fs.js";
+import { readFileSafe, fileExists, parseJsonSafe } from "../utils/fs.js";
 import {
   findSettingsInRepo,
   findApiCallsInRepo,
@@ -50,7 +50,7 @@ export function registerResources(server: McpServer, config: Config): void {
     { description: "NPM scripts from package.json." },
     async (uri) => {
       const pkg = await readFileSafe(config.fs, "package.json");
-      const scripts = pkg ? ((JSON.parse(pkg) as PackageJson).scripts ?? {}) : {};
+      const scripts = parseJsonSafe<PackageJson>(pkg)?.scripts ?? {};
       return { contents: [{ uri: uri.href, text: JSON.stringify(scripts, null, 2) }] };
     }
   );

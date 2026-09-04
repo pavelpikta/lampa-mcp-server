@@ -15,6 +15,15 @@ export type R2Bundle = Record<string, string>;
 
 const DEFAULT_IGNORE = ["node_modules", ".git", "dist", "build"];
 
+// Malformed JSON in R2 must degrade gracefully, not crash the isolate.
+function parseJsonSafe<T>(text: string): T | null {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * R2-backed RepoFs.
  *
@@ -53,7 +62,7 @@ export class R2RepoFs implements RepoFs {
     const cacheKey = "__manifest__";
     const cached = this.cache.get(cacheKey);
     if (cached !== undefined) {
-      this.manifest = cached ? (JSON.parse(cached) as R2Manifest) : { files: [] };
+      this.manifest = cached ? (parseJsonSafe<R2Manifest>(cached) ?? { files: [] }) : { files: [] };
       this.fileSet = new Set(this.manifest.files);
       return this.manifest;
     }
@@ -68,7 +77,7 @@ export class R2RepoFs implements RepoFs {
 
     const text = await obj.text();
     this.cache.set(cacheKey, text);
-    this.manifest = JSON.parse(text) as R2Manifest;
+    this.manifest = parseJsonSafe<R2Manifest>(text) ?? { files: [] };
     this.fileSet = new Set(this.manifest.files);
     return this.manifest;
   }
@@ -86,7 +95,7 @@ export class R2RepoFs implements RepoFs {
     const cacheKey = "__bundle__";
     const cached = this.cache.get(cacheKey);
     if (cached !== undefined) {
-      this.bundle = cached ? (JSON.parse(cached) as R2Bundle) : {};
+      this.bundle = cached ? (parseJsonSafe<R2Bundle>(cached) ?? {}) : {};
       return this.bundle;
     }
 
@@ -99,7 +108,7 @@ export class R2RepoFs implements RepoFs {
 
     const text = await obj.text();
     this.cache.set(cacheKey, text);
-    this.bundle = JSON.parse(text) as R2Bundle;
+    this.bundle = parseJsonSafe<R2Bundle>(text) ?? {};
     return this.bundle;
   }
 
@@ -203,7 +212,7 @@ export class R2RepoFs implements RepoFs {
 
     if (this.cache.has(cacheKey)) {
       const cached = this.cache.get(cacheKey);
-      return cached ? (JSON.parse(cached) as T) : null;
+      return cached ? parseJsonSafe<T>(cached) : null;
     }
 
     const obj = await this.bucket.get(key);
@@ -214,7 +223,7 @@ export class R2RepoFs implements RepoFs {
 
     const text = await obj.text();
     this.cache.set(cacheKey, text);
-    return JSON.parse(text) as T;
+    return parseJsonSafe<T>(text);
   }
 
   async getSnapshotMeta(): Promise<SnapshotMeta | null> {

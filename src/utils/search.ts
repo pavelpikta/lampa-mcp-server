@@ -14,8 +14,15 @@ function globToExts(globs: string[]): string[] {
   return globs.map((g) => g.replace(/^\*/, ""));
 }
 
+// Kept small on purpose: results must stay well within one MCP tool-call response.
+const MAX_HITS = 100;
+const MAX_HITS_PER_FILE = 5;
+const PREVIEW_LEN = 200;
+// Bounds regex backtracking cost on pathological user patterns (ReDoS mitigation).
+const MAX_REGEX_TEST_LEN = 5000;
+
 /**
- * Pure-JS code search over RepoFs. Returns up to 100 matches.
+ * Pure-JS code search over RepoFs. Returns up to MAX_HITS matches.
  * `file` in results is always a repo-relative posix path.
  * Optional `prefix` scopes the walk (e.g. "src", "plugins").
  */
@@ -32,20 +39,21 @@ export async function searchCode(
   const pattern = isRegex ? new RegExp(query) : null;
 
   for (const file of files) {
-    if (results.length >= 100) break;
+    if (results.length >= MAX_HITS) break;
     const content = await fs.readFile(file);
     if (!content) continue;
     const lines = content.split("\n");
     let perFile = 0;
     for (let i = 0; i < lines.length; i++) {
-      if (results.length >= 100 || perFile >= 5) break;
+      if (results.length >= MAX_HITS || perFile >= MAX_HITS_PER_FILE) break;
       const line = lines[i];
-      const matched = pattern ? pattern.test(line) : line.includes(query);
+      const testLine = line.length > MAX_REGEX_TEST_LEN ? line.slice(0, MAX_REGEX_TEST_LEN) : line;
+      const matched = pattern ? pattern.test(testLine) : line.includes(query);
       if (matched) {
         results.push({
           file,
           line: i + 1,
-          text: line.trim().slice(0, 200),
+          text: line.trim().slice(0, PREVIEW_LEN),
         });
         perFile++;
       }

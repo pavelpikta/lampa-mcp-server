@@ -8,6 +8,16 @@ export async function fileExists(fs: RepoFs, relPath?: string): Promise<boolean>
   return fs.exists(relPath);
 }
 
+// Snapshot content (local checkout or R2) is untrusted input to this parser; never let it throw.
+export function parseJsonSafe<T>(text: string | null | undefined): T | null {
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function listFilesRecursive(
   fs: RepoFs,
   prefix = "",

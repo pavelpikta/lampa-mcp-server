@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { Config } from "../config.js";
 import { basename, joinRepo } from "../fs/paths.js";
-import { listFilesRecursive, readFileSafe, fileExists } from "../utils/fs.js";
+import { listFilesRecursive, readFileSafe, fileExists, parseJsonSafe } from "../utils/fs.js";
 import { searchCode } from "../utils/search.js";
 import { findMissingLangKeys, extractPlatformTargets } from "../utils/lampa_modern.js";
 import { formatI18nKeys, formatI18nCoverage } from "../utils/lampa_deep.js";
@@ -204,7 +204,7 @@ async function grepChecks(
 async function buildHint(config: Config, goal: "build" | "dev" | "test" | "doc" | "lint") {
   const pkg = await readFileSafe(config.fs, "package.json");
   if (!pkg) return fail("No package.json found.");
-  const data = JSON.parse(pkg) as { scripts?: Record<string, string> };
+  const data = parseJsonSafe<{ scripts?: Record<string, string> }>(pkg) ?? {};
   const scripts: Record<string, string> = data.scripts ?? {};
 
   if (goal === "dev") {
@@ -511,7 +511,7 @@ async function packagingGuide(config: Config) {
   const pkg = await readFileSafe(config.fs, "package.json");
   let scripts = "";
   if (pkg) {
-    const data = JSON.parse(pkg) as { scripts?: Record<string, string> };
+    const data = parseJsonSafe<{ scripts?: Record<string, string> }>(pkg) ?? {};
     scripts = Object.entries(data.scripts ?? {})
       .map(([k, v]) => `- \`npm run ${k}\` → ${v}`)
       .join("\n");

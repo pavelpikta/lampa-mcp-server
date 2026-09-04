@@ -17,24 +17,26 @@ Runs in two modes:
 
 ## What it does
 
-The server exposes **14 tools** (plus Worker-only `whoami`) and curated resources (`lampa://plugin-guide`, `lampa://pitfalls`, `lampa://events`, `lampa://landmarks`, `lampa://edit-rules`, `lampa://api-surface`). Tools are read-only: they never write the Lampa repo.
+The server exposes **16 tools** (plus Worker-only `whoami`) and curated resources (`lampa://plugin-guide`, `lampa://pitfalls`, `lampa://events`, `lampa://landmarks`, `lampa://edit-rules`, `lampa://api-surface`). Tools are read-only: they never write the Lampa repo.
 
-| Tool                | Role                                                      |
-| ------------------- | --------------------------------------------------------- |
-| `summarize_repo`    | Snapshot metadata, tree, scripts, optional module listing |
-| `search_code`       | Content/regex search                                      |
-| `find_files`        | Paths by name, feature, UI, styles, or specs              |
-| `read_source`       | File / core module / template bytes                       |
-| `analyze_plugin`    | One plugin folder (+ load path if name omitted)           |
-| `list_catalog`      | Catalogs (API, events, storage, Maker, …)                 |
-| `trace_symbol`      | Follow one event, component, file, or deprecated API      |
-| `explain_docs`      | Plugin docs, patterns, packaging                          |
-| `plan_change`       | Plan + targets + impact + risks                           |
-| `draft_patch`       | Suggested diffs (does not write)                          |
-| `scaffold_plugin`   | New plugin / setting / hook text (does not write)         |
-| `validate_code`     | Plugin score, grep, i18n, build hint                      |
-| `guide_cub`         | CUB APIs as used in Lampa source                          |
-| `resolve_edit_path` | Authoritative `src/` / `plugins/` path                    |
+| Tool                   | Role                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `summarize_repo`       | Snapshot metadata, tree, scripts, optional module listing                                  |
+| `search_code`          | Content/regex search                                                                       |
+| `find_files`           | Paths by name, feature, UI, styles, or specs                                               |
+| `read_source`          | File / core module / template bytes                                                        |
+| `analyze_plugin`       | One plugin folder (+ load path if name omitted)                                            |
+| `list_catalog`         | Catalogs (API, events, storage, Maker, …)                                                  |
+| `trace_symbol`         | Follow one event, component, file, or deprecated API                                       |
+| `explain_docs`         | Plugin docs, patterns, packaging                                                           |
+| `plan_change`          | Plan + targets + impact + risks                                                            |
+| `draft_patch`          | Suggested diffs (does not write)                                                           |
+| `scaffold_plugin`      | New plugin / setting / hook text (does not write)                                          |
+| `validate_code`        | Plugin score, grep, i18n, build hint                                                       |
+| `guide_cub`            | CUB APIs as used in Lampa source                                                           |
+| `resolve_edit_path`    | Authoritative `src/` / `plugins/` path                                                     |
+| `guide_external_api`   | Third-party content APIs (TMDB, KinoPoisk, Alloha, MDBList, Jackett, TorrServer, Jellyfin)  |
+| `guide_plugin_catalog` | Real plugin-catalog packaging/publishing pipeline (manifest, obfuscation, routing)          |
 
 Preferred agent loop:
 
@@ -46,6 +48,8 @@ summarize_repo → explain_docs(mode=plugin_docs) | analyze_plugin
 ```
 
 Use `resolve_edit_path` before editing so you change `src/` / `plugins/` rather than `public/` or `build/`.
+
+Third-party content-provider APIs (TMDB/KinoPoisk/Alloha/MDBList/Jackett/TorrServer/Jellyfin): `guide_external_api`. Shipping a plugin into the real lampa-plugins catalog: `guide_plugin_catalog`. Both are static, curated references — they never expose real credentials and never touch this repo's snapshot.
 
 ---
 

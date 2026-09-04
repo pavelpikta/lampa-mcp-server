@@ -15,7 +15,7 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
     {
       title: "Analyze one Lampa plugin folder",
       description:
-        "Single-call report for one `plugins/<name>` folder: files, Lampa.* usage, Listener follow/send, settings, CSS, and an entry preview truncated to ~30 lines, plus how Lampa loads plugins (`src/core/plugins.js`). Unlike `list_catalog` this is one plugin, unlike `trace_symbol` it does not follow a single event/file, unlike `validate_code` it does not score conventions. `plugin` is the case-sensitive directory name under plugins/ (e.g. `online`, `iptv`, `collections`) — not a manifest id; omit `plugin` for load-path only; unknown folder → error listing available folders.",
+        "Single-call report for one `plugins/<name>` folder: files, Lampa.* usage, Listener follow/send, settings, CSS, and an entry preview truncated to ~30 lines, plus how Lampa loads plugins (`src/core/plugins.js`).\nUnlike `list_catalog` this is scoped to one plugin, unlike `trace_symbol` it does not follow a single event/file across the repo, unlike `validate_code` it does not score conventions.\nEntry file is chosen as main.js, else `<plugin>.js`, else the first .js file found — `plugin` itself must be the case-sensitive directory name (e.g. `online`, `iptv`), not a manifest id; omit it for load-path-only output; an unknown folder errors and lists available folders instead of guessing.",
       inputSchema: {
         plugin: z
           .string()
@@ -60,6 +60,7 @@ export function registerLampaDeepTools(server: McpServer, config: Config): void 
       let entryPreview = "";
       if (entryPoint) {
         const content = (await readFileSafe(config.fs, entryPoint)) ?? "";
+        // Matches the "~30 lines" cap stated in analyze_plugin's tool description.
         entryPreview = content.split("\n").slice(0, 30).join("\n");
       }
 
@@ -378,6 +379,7 @@ async function deps(config: Config, file: string) {
   const reverseMatches = (await searchCode(config.fs, base, ["*.js", "*.ts"], false))
     .filter((m) => m.text.includes("require") || m.text.includes("import"))
     .filter((m) => m.file !== file)
+    // Matches the "reverse-refs cap at 20" stated in trace_symbol's tool description.
     .slice(0, 20);
   return ok(
     [

@@ -583,7 +583,7 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     {
       title: "Draft a Lampa unified diff",
       description:
-        "Returns TODO unified diffs as text only — does not write the repository. Best with `plan_context` from `plan_change`; unlike `plan_change`, this invents diffs; unlike `scaffold_plugin`, it patches existing files rather than new-plugin boilerplate. `target_files` overrides inference (not combined); without it, infers up to 5 files from `request` (weaker); missing files get a “File not found” note in the markdown; TODO hunks are suggested unified-diff `@@` diffs, not guaranteed to apply; apply by hand after `read_source`.",
+        "Returns TODO unified diffs as text only — does not write the repository.\nBest with `plan_context` pasted from `plan_change`; unlike `plan_change`, this invents concrete diff hunks; unlike `scaffold_plugin`, it patches existing files rather than emitting new-plugin boilerplate.\n`target_files`, when given, fully overrides inference (the two are never combined); without it, up to 5 files are inferred from `request` alone, which is weaker than passing `plan_context`'s target list explicitly.\nMissing files get a 'File not found' note instead of aborting the whole call; the `@@` hunks are suggested, not guaranteed to apply — always re-check against `read_source` before applying by hand.",
       inputSchema: {
         request: z.string().describe("The change to implement."),
         target_files: z
@@ -652,7 +652,7 @@ export function registerEditingTools(server: McpServer, config: Config): void {
     {
       title: "Generate Lampa plugin, setting, or hook text",
       description:
-        "Returns markdown only; does not write the repository. Emits a full plugin scaffold (`kind=plugin`), a SettingsApi snippet (`kind=setting`), or the best Listener/Player hook (`kind=hook`) — not a patch against existing files (`draft_patch`). `kind=plugin` needs plugin_name + description; `plugin_kind` is screen (default) | player | context-menu | settings-only for `kind=plugin` only; `kind=setting` needs key + label + type (`type=toggle` aliases `trigger`); `kind=hook` needs trigger; missing required combo → error (not a partial scaffold). Then call `validate_code` mode=plugin on the result.",
+        "Returns markdown only; does not write the repository — not a patch against existing files (`draft_patch`).\n`kind=plugin` emits a full main.js scaffold: requires `plugin_name` + `description`; `plugin_kind` (screen default | player | context-menu | settings-only) applies only here.\n`kind=setting` emits a SettingsApi registration snippet: requires `key` + `label` + `type` (`type=toggle` aliases `trigger`).\n`kind=hook` emits the best-matching Listener/Player hook: requires `trigger`.\nA missing required combo for the chosen `kind` errors instead of returning a partial scaffold. Follow up with `validate_code` mode=plugin on the result.",
       inputSchema: {
         kind: z
           .enum(["plugin", "setting", "hook"])
