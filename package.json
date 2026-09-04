@@ -1,6 +1,6 @@
 {
   "name": "lampa-mcp-server",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "description": "MCP server for Lampa source repository development assistance (local stdio + Cloudflare Workers)",
   "type": "module",
   "license": "MIT",
