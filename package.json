@@ -33,7 +33,7 @@
     "@cloudflare/workers-oauth-provider": "^0.10.2",
     "@modelcontextprotocol/server": "^2.0.0",
     "agents": "^0.23.0",
-    "hono": "^4.13.7",
+    "hono": "^4.13.8",
     "zod": "^4.6.5"
   },
   "devDependencies": {
