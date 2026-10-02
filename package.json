@@ -31,9 +31,9 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.10.2",
-    "@modelcontextprotocol/server": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.2.0",
     "agents": "^0.24.0",
-    "hono": "^4.13.8",
+    "hono": "^4.13.11",
     "zod": "^4.6.5"
   },
   "devDependencies": {
