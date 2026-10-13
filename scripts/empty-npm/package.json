@@ -1,0 +1,6 @@
+{
+  "name": "npm",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Stand-in so semantic-release does not install the npm CLI and its bundled advisories."
+}

@@ -24,8 +24,10 @@ plugins:
   - - "@semantic-release/changelog"
     - changelogFile: CHANGELOG.md
 
-  - - "@semantic-release/npm"
-    - npmPublish: false
+  # Version bump only. @semantic-release/npm is not used: it installs the npm CLI,
+  # whose bundled deps are the open Dependabot alerts. `npm` is overridden to a stub.
+  - - "@semantic-release/exec"
+    - prepareCmd: npm version ${nextRelease.version} --no-git-tag-version
 
   - - "@semantic-release/git"
     - assets:
