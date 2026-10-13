@@ -83,63 +83,84 @@ async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export default new OAuthProvider({
-  apiRoute: "/mcp",
-  apiHandler,
-  defaultHandler: {
-    fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
-      return PublicHandler.fetch(request, env, ctx);
+/** Isolate-lifetime providers — one per origin, since 1.x binds tokens to a fixed resource. */
+const providers = new Map<string, OAuthProvider<WorkerEnv>>();
+
+function getProvider(resource: string): OAuthProvider<WorkerEnv> {
+  let provider = providers.get(resource);
+  if (!provider) {
+    provider = createProvider(resource);
+    providers.set(resource, provider);
+  }
+  return provider;
+}
+
+function createProvider(resource: string) {
+  return new OAuthProvider<WorkerEnv>({
+    apiRoute: "/mcp",
+    apiHandler,
+    defaultHandler: {
+      fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
+        return PublicHandler.fetch(request, env, ctx);
+      },
     },
-  },
-  authorizeEndpoint: "/authorize",
-  tokenEndpoint: "/oauth/token",
-  clientRegistrationEndpoint: "/oauth/register",
-  clientIdMetadataDocumentEnabled: true,
-  resourceMetadata: {
-    scopes_supported: ["mcp:read"],
-  },
-  /**
-   * Accept a GitHub PAT in `Authorization: Bearer <token>`.
-   * Validated users are cached in OAUTH_KV (hash of token → profile) for 30m.
-   */
-  resolveExternalToken: async ({ token, env }) => {
-    const tokenHash = await sha256Hex(token);
-    const cacheKey = `pat-user:${tokenHash}`;
+    authorizeEndpoint: "/authorize",
+    tokenEndpoint: "/oauth/token",
+    clientRegistrationEndpoint: "/oauth/register",
+    clientIdMetadataDocumentEnabled: true,
+    resourceMetadata: { resource },
+    requiredScopes: ["mcp:read"],
+    /**
+     * Accept a GitHub PAT in `Authorization: Bearer <token>`.
+     * Validated users are cached in OAUTH_KV (hash of token → profile) for 30m.
+     */
+    resolveExternalToken: async ({ token, env }) => {
+      const tokenHash = await sha256Hex(token);
+      const cacheKey = `pat-user:${tokenHash}`;
 
-    try {
-      const cached = await env.OAUTH_KV.get(cacheKey, "json");
-      if (
-        cached &&
-        typeof cached === "object" &&
-        "login" in cached &&
-        typeof (cached as AuthProps).login === "string"
-      ) {
-        const c = cached as AuthProps;
-        return {
-          props: {
-            login: c.login,
-            name: c.name,
-            email: c.email ?? "",
-          },
-        };
+      try {
+        const cached = await env.OAUTH_KV.get(cacheKey, "json");
+        if (
+          cached &&
+          typeof cached === "object" &&
+          "login" in cached &&
+          typeof (cached as AuthProps).login === "string"
+        ) {
+          const c = cached as AuthProps;
+          return {
+            props: {
+              login: c.login,
+              name: c.name,
+              email: c.email ?? "",
+            },
+            audience: resource,
+          };
+        }
+      } catch {
+        // ignore cache read errors
       }
-    } catch {
-      // ignore cache read errors
-    }
 
-    const props = await resolveGitHubPat(token, env);
-    if (!props) return null;
+      const props = await resolveGitHubPat(token, env);
+      if (!props) return null;
 
-    // Do not persist the raw PAT — only profile fields.
-    const toStore = { login: props.login, name: props.name, email: props.email };
-    try {
-      await env.OAUTH_KV.put(cacheKey, JSON.stringify(toStore), {
-        expirationTtl: PAT_CACHE_TTL_SECONDS,
-      });
-    } catch {
-      // ignore cache write errors
-    }
+      // Do not persist the raw PAT — only profile fields.
+      const toStore = { login: props.login, name: props.name, email: props.email };
+      try {
+        await env.OAUTH_KV.put(cacheKey, JSON.stringify(toStore), {
+          expirationTtl: PAT_CACHE_TTL_SECONDS,
+        });
+      } catch {
+        // ignore cache write errors
+      }
 
-    return { props: toStore };
+      return { props: toStore, audience: resource };
+    },
+  });
+}
+
+export default {
+  fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext) {
+    const resource = new URL("/mcp", request.url).href;
+    return getProvider(resource).fetch(request, env, ctx);
   },
-});
+};
