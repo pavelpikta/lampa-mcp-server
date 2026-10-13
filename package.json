@@ -34,7 +34,7 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "agents": "^0.28.1",
     "hono": "^4.13.13",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -48,9 +48,9 @@
     "prettier": "^3.9.10",
     "semantic-release": "^25.0.2",
     "typescript": "~6.0.2",
-    "typescript-eslint": "^8.71.1",
-    "vitest": "^5.0.3",
-    "wrangler": "^4.149.0"
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.4",
+    "wrangler": "^4.150.0"
   },
   "engines": {
     "node": ">=20"
