@@ -30,7 +30,7 @@
     "release": "semantic-release"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^1.2.2",
+    "@cloudflare/workers-oauth-provider": "^1.2.3",
     "@modelcontextprotocol/server": "^2.0.0",
     "agents": "^0.28.1",
     "hono": "^4.13.13",
