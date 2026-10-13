@@ -1,3 +1,9 @@
+## [1.9.4](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.9.3...v1.9.4) (2026-10-13)
+
+### Bug Fixes
+
+* **worker:** adopt workers-oauth-provider 1.2.2 ([2258623](https://github.com/pavelpikta/lampa-mcp-server/commit/22586235a3b7c53ce72d37ade1a948e3a26d346e))
+
 ## [1.9.3](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.9.2...v1.9.3) (2026-09-04)
 
 ## [1.9.2](https://github.com/pavelpikta/lampa-mcp-server/compare/v1.9.1...v1.9.2) (2026-09-04)
