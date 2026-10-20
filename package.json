@@ -50,7 +50,7 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.71.2",
     "vitest": "^5.0.5",
-    "wrangler": "^4.151.0"
+    "wrangler": "^4.151.1"
   },
   "engines": {
     "node": ">=20"
