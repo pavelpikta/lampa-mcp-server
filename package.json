@@ -32,7 +32,7 @@
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^1.2.3",
     "@modelcontextprotocol/server": "^2.0.0",
-    "agents": "^0.28.1",
+    "agents": "^0.30.0",
     "hono": "^4.13.13",
     "zod": "^4.6.7"
   },
@@ -50,7 +50,7 @@
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.71.2",
     "vitest": "^5.0.5",
-    "wrangler": "^4.151.1"
+    "wrangler": "^4.152.0"
   },
   "engines": {
     "node": ">=20"
