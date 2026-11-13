@@ -48,7 +48,7 @@
     "prettier": "^3.9.10",
     "semantic-release": "^25.0.2",
     "typescript": "~6.0.2",
-    "typescript-eslint": "^8.72.1",
+    "typescript-eslint": "^8.72.2",
     "vitest": "^5.1.0",
     "wrangler": "^4.158.0"
   },
